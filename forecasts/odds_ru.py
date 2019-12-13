@@ -1,7 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 import datetime
-import re
+# import re
 
 
 def get_forecasts_off_all_pages():
