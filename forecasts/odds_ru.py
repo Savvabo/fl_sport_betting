@@ -1,18 +1,22 @@
 import requests
 from bs4 import BeautifulSoup
 import datetime
-# import re
+import re
+import json
 
 
 def get_forecasts_off_all_pages():
-    website = 'https://www.vseprosport.ru/news/{}/'
+    website = 'https://odds.ru/forecasts/?page={}&per_page=200'
     all_pages = []
     page = 1
     while True:
         print(page)
-        response = requests.get(website.format(page))
-        soup = BeautifulSoup(response.text, 'lxml')
-        if not soup.find('div', class_='list-view') or page == 5:
+        headers = {'X-Requested-With': 'XMLHttpRequest'}
+        response = requests.get(website.format(page), headers=headers, proxies={'https': '178.62.81.107:3128'})
+        page_html = json.loads(response.text)['html']
+        soup = BeautifulSoup(page_html, 'lxml')
+        all_forecasts = soup.find_all('div', class_='forecast-item')
+        if not all_forecasts or page == 5:
             return all_pages
         else:
             all_pages.append(soup)
