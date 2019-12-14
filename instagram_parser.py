@@ -13,13 +13,15 @@ logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(a
                     level=logging.DEBUG)
 logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("connectionpool").setLevel(logging.WARNING)
+
 
 
 class InstagramParser:
-    def __init__(self, resource):
+    def __init__(self, resources):
         self.config = configparser.ConfigParser()
         self.config.read('config.ini')
-        self.resource = Account(resource)
+        self.resources = resources
         self.anon_agent = WebAgent()
         self.agent = WebAgentAccount(self.config['instagram']['LOGIN'])
         self.agent.auth(self.config['instagram']['PASSWORD'])
@@ -50,7 +52,7 @@ class InstagramParser:
 
     def to_sort_def(self, item):
         if len(item[1]['insta_request_times']) >= 10:
-            return sum(item[1]['insta_request_times']) /len(item[1]['insta_request_times'])
+            return sum(item[1]['insta_request_times']) / len(item[1]['insta_request_times'])
         else:
             return item[1]['check_request_time']
 
@@ -60,7 +62,7 @@ class InstagramParser:
         return sorted_proxies
 
     def get_proxies(self):
-        raw_proxies = ProxyHelper().load_proxies_list()[:500]
+        raw_proxies = ProxyHelper().load_proxies_list()
         chunks = list(self.chunkify(raw_proxies, 500))
         valid_proxies = {}
         for n, chunk in enumerate(chunks):
@@ -79,9 +81,9 @@ class InstagramParser:
     def mark_proxy_as_failed(self, proxy):
         try:
             self.proxy_list[proxy]['error_count'] += 1
-        except ValueError:
+        except KeyError:
             pass
-        if self.proxy_list[proxy]['error_count'] == 5:
+        if self.proxy_list.get(proxy, {}).get('error_count') == 5:
             try:
                 self.proxy_list.pop(proxy)
             except KeyError:
@@ -200,16 +202,24 @@ class InstagramParser:
         return post_data
 
     def process_posts(self, posts):
-        pool = ThreadPool(50)
-        parsed_posts = pool.map(self.parse_post, posts)
-        self.mdb.add_new_posts(parsed_posts)
+        chunks = list(self.chunkify(posts, 500))
+        for n, chunk in enumerate(chunks):
+            logging.info('processing {}/{} posts batch'.format(n + 1, len(chunks)))
+            pool = ThreadPool(50)
+            parsed_posts = pool.map(self.parse_post, chunk)
+            self.mdb.add_new_posts(parsed_posts)
+            pool.close()
 
     def run(self):
-        new_posts = self.get_new_posts()
-        self.process_posts(new_posts)
+        for resource in self.resources:
+            logging.info(f'start to parse {resource} resource')
+            self.resource = Account(resource)
+            new_posts = self.get_new_posts()
+            self.process_posts(new_posts)
+            logging.info(f'{resource} resource is parsed')
 
 
 
 
-InstagramParser('sportsru').run()
+InstagramParser(['bogunsa', 'sportsru']).run()
 
