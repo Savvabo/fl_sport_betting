@@ -13,19 +13,23 @@ logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(a
                     level=logging.DEBUG)
 logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("connectionpool").setLevel(logging.WARNING)
+
 
 
 class InstagramParser:
-    def __init__(self, resource):
+    def __init__(self, resources):
         self.config = configparser.ConfigParser()
         self.config.read('config.ini')
-        self.resource = Account(resource)
+        self.resources = resources
         self.anon_agent = WebAgent()
         self.agent = WebAgentAccount(self.config['instagram']['LOGIN'])
         self.agent.auth(self.config['instagram']['PASSWORD'])
         self.mdb = MDB()
         self.proxy_list = self.get_proxies()
         self.use_proxy = False
+
+
 
     @staticmethod
     def chunkify(l, n):
@@ -48,7 +52,7 @@ class InstagramParser:
 
     def to_sort_def(self, item):
         if len(item[1]['insta_request_times']) >= 10:
-            return sum(item[1]['insta_request_times']) /len(item[1]['insta_request_times'])
+            return sum(item[1]['insta_request_times']) / len(item[1]['insta_request_times'])
         else:
             return item[1]['check_request_time']
 
@@ -58,7 +62,7 @@ class InstagramParser:
         return sorted_proxies
 
     def get_proxies(self):
-        raw_proxies = ProxyHelper().load_proxies_list()[:500]
+        raw_proxies = ProxyHelper().load_proxies_list()
         chunks = list(self.chunkify(raw_proxies, 500))
         valid_proxies = {}
         for n, chunk in enumerate(chunks):
@@ -77,9 +81,9 @@ class InstagramParser:
     def mark_proxy_as_failed(self, proxy):
         try:
             self.proxy_list[proxy]['error_count'] += 1
-        except ValueError:
+        except KeyError:
             pass
-        if self.proxy_list[proxy]['error_count'] == 5:
+        if self.proxy_list.get(proxy, {}).get('error_count') == 5:
             try:
                 self.proxy_list.pop(proxy)
             except KeyError:
@@ -88,10 +92,11 @@ class InstagramParser:
             logging.info('proxy list is empty, getting new proxies')
             self.proxy_list = self.get_proxies()
 
-    def get_settings(self):
-        if self.use_proxy and random.randint(1, 100) != 50:
+    def get_settings(self, proxies_top_perc=100):
+        if self.use_proxy and time.time() - self.previous_local_request < 11 * 60:
             self.sort_proxies()
-            chosen_proxy = random.choice(list(self.proxy_list.keys())[:len(self.proxy_list)//4])
+            list_stop_index = int(len(self.proxy_list)//(100/proxies_top_perc))
+            chosen_proxy = random.choice(list(self.proxy_list.keys())[:list_stop_index])
         else:
             chosen_proxy = None
             if self.use_proxy:
@@ -101,27 +106,23 @@ class InstagramParser:
             "proxies": {
                 "http": chosen_proxy,
                 "https": chosen_proxy,
-            },'timeout': 60}
+            }, 'timeout': 60}
         return chosen_proxy, settings
 
     def insta_request(self, pointer=None, data=None):
-        chosen_proxy, settings = self.get_settings()
+        chosen_proxy, settings = self.get_settings(proxies_top_perc=8)
         posts = None
         while True:
             try:
                 if data:
-                    logging.info('start to make request')
                     self.anon_agent.update(data, settings=settings)
-                    logging.info('end requests make')
                     break
                 else:
-                    logging.info('start to make request')
                     t1 = time.time()
                     posts, pointer = self.anon_agent.get_media(self.resource, pointer=pointer, settings=settings, delay=1)
                     request_time = time.time() - t1
                     if chosen_proxy:
                         self.proxy_list[chosen_proxy]['insta_request_times'].append(request_time)
-                    logging.info('end requests make')
                     break
             except (InternetException, UnexpectedResponse):
                 logging.info('removing proxy')
@@ -129,8 +130,9 @@ class InstagramParser:
                     self.mark_proxy_as_failed(chosen_proxy)
                 else:
                     self.use_proxy = True
+                    self.previous_local_request = time.time()
                     logging.info('starting to use proxies')
-                chosen_proxy, settings = self.get_settings()
+                chosen_proxy, settings = self.get_settings(proxies_top_perc=8)
         if posts:
             return posts, pointer
 
@@ -200,16 +202,24 @@ class InstagramParser:
         return post_data
 
     def process_posts(self, posts):
-        pool = ThreadPool(1)
-        parsed_posts = pool.map(self.parse_post, posts)
-        self.mdb.add_new_posts(parsed_posts)
+        chunks = list(self.chunkify(posts, 500))
+        for n, chunk in enumerate(chunks):
+            logging.info('processing {}/{} posts batch'.format(n + 1, len(chunks)))
+            pool = ThreadPool(50)
+            parsed_posts = pool.map(self.parse_post, chunk)
+            self.mdb.add_new_posts(parsed_posts)
+            pool.close()
 
     def run(self):
-        new_posts = self.get_new_posts()
-        self.process_posts(new_posts)
+        for resource in self.resources:
+            logging.info(f'start to parse {resource} resource')
+            self.resource = Account(resource)
+            new_posts = self.get_new_posts()
+            self.process_posts(new_posts)
+            logging.info(f'{resource} resource is parsed')
 
 
 
 
-InstagramParser('sportsru').run()
+InstagramParser(['bogunsa', 'sportsru']).run()
 
