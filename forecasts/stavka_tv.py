@@ -35,6 +35,13 @@ def get_forecasts_off_all_pages():
             all_pages.append(soup)
             page += 1
 
+def get_forecast_logo(forecast_link):
+    response = requests.get(forecast_link)
+    soup = BeautifulSoup(response.text, 'lxml')
+    forecast_logo = soup.find('span', class_='UMatchTeam__logo').img['src'].strip()
+    return forecast_logo
+    #
+
 
 def parse_forecasts(page):
     parsed_forecasts = []
@@ -43,24 +50,32 @@ def parse_forecasts(page):
         forecast_data = dict()
         # forecast_data['forecast_title'] = (re.match("(.*?):", forecast.find('div', class_='top-article').find('div', class_='vps-h3').text).group()).replace(':', '')
         forecast_data['forecast_title'] = forecast.find('div', class_='Prediction__header-name').text.strip()
-        # forecast_data['forecast_logo'] = forecast.find('div', class_='current-coefficent').span.text
         forecast_data['forecast_date'] = get_date_from_str(forecast.find('b', class_='PredictionContent__date-bold').text.strip())
         forecast_data['forecast_coefficient'] = forecast.find_all('em', class_='PredictionContent__bet-text--em')[1].text.strip()
-        forecast_data['forecast_description'] = forecast.find_all('em', class_='PredictionContent__bet-text--em')[0].text.strip()
+        forecast_data['forecast_event_outcome'] = forecast.find_all('em', class_='PredictionContent__bet-text--em')[0].text.strip()
+        raw_description_list = forecast.find('div', class_='PredictionContent').find_all('p')[0:]
+        clear_description = map(lambda raw_desc: raw_desc.text, raw_description_list)
+        forecast_data['forecast_description'] = ' '.join(clear_description)
+        # ' '.join(map(lambda raw_desc: raw_desc.text, forecast.find('div', class_='PredictionContent').find_all('p', dir="ltr")[0:3]))
         forecast_data['forecast_link'] = 'https://stavka.tv{}'.format(forecast.find('a')['href'])
+        forecast_data['forecast_logo'] = get_forecast_logo(forecast_data['forecast_link'])
         parsed_forecasts.append(forecast_data)
     return parsed_forecasts
 
 
 def format_to_string(forecast):
     template = "    1. {forecast_title}     \n " \
+               "    2. {forecast_logo}     \n " \
                "    2. {forecast_date}     \n " \
                "    3. {forecast_coefficient}     \n " \
+               "    4. {forecast_event_outcome}     \n " \
                "    4. {forecast_description}     \n " \
                "    5. {forecast_link}     "
     formatted_message = template.format(forecast_title=forecast['forecast_title'],
+                                        forecast_logo=forecast['forecast_logo'],
                                         forecast_date=forecast['forecast_date'],
                                         forecast_coefficient=forecast['forecast_coefficient'],
+                                        forecast_event_outcome=forecast['forecast_event_outcome'],
                                         forecast_description=forecast['forecast_description'],
                                         forecast_link=forecast['forecast_link'])
     return formatted_message

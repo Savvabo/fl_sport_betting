@@ -19,11 +19,12 @@ def get_forecasts_off_all_pages():
             page += 1
 
 
-def get_forecast_description(forecast_link):
+def get_forecast_event_outcome(forecast_link):
     response = requests.get(forecast_link)
     soup = BeautifulSoup(response.text, 'lxml')
-    forecast_description = soup.find('blockquote').text
-    return forecast_description
+    forecast_event_outcome = soup.find('blockquote').text
+    return forecast_event_outcome
+
 
 def get_date_from_str(date_str):
     now = datetime.datetime.now()
@@ -34,7 +35,8 @@ def get_date_from_str(date_str):
     current_hours = all_int[3]
     current_year = '20' + all_int[2]
     current_month = all_int[1]
-    task_date = now.replace(minute=int(current_minutes), hour=int(current_hours), year=int(current_year), month=int(current_month), day=int(current_day))
+    task_date = now.replace(minute=int(current_minutes), hour=int(current_hours), year=int(current_year),
+                            month=int(current_month), day=int(current_day))
     date_time = task_date.strftime("%d-%m-%Y, %H:%M")
     return date_time
 
@@ -47,6 +49,20 @@ def get_forecast_date(forecast_link):
     # BeautifulSoup(requests.get(forecast.find_parent('a')['href']).text, 'lxml').find('a', class_='date_and_time').text
 
 
+def get_forecast_description(forecast_link):
+    response = requests.get(forecast_link)
+    soup = BeautifulSoup(response.text, 'lxml')
+    # ('div', class_='about_team')
+    # ('section', class_='news-content')
+    # raw_description_list = forecast.find('div', class_='PredictionContent').find_all('p', dir="ltr")[0:3]
+    # clear_description = map(lambda raw_desc: raw_desc.text, raw_description_list)
+    # forecast_data['forecast_description'] = ' '.join(clear_description)
+    forecast_description = soup.find('div', class_='about_team').text.strip()
+    return forecast_description
+    # BeautifulSoup(requests.get(forecast.find_parent('a')['href']).text, 'lxml').find('div', class_='about_team').text
+    # BeautifulSoup(requests.get(forecast.find_parent('a')['href']).text, 'lxml').find('div', class_='news-content').text
+
+
 def parse_forecasts(page):
     parsed_forecasts = []
     forecasts = page.find('div', class_='list-view').find_all('div', class_='hidden-xs')
@@ -54,7 +70,7 @@ def parse_forecasts(page):
         forecast_data = dict()
         if ':' or '.':
             forecast_data['forecast_title'] = \
-            forecast.find('div', class_='top-article').find('div', class_='vps-h3').text.split(':')[0].split('.')[0]
+                forecast.find('div', class_='top-article').find('div', class_='vps-h3').text.split(':')[0].split('.')[0]
         else:
             forecast_data['forecast_title'] = forecast.find('div', class_='top-article').find('div',
                                                                                               class_='vps-h3').text
@@ -62,9 +78,9 @@ def parse_forecasts(page):
         forecast_data['forecast_coefficient'] = forecast.find('div', class_='current-coefficent').span.text
         forecast_data['forecast_link'] = forecast.find_parent('a')['href']
         try:
-            forecast_data['forecast_description'] = get_forecast_description(forecast_data['forecast_link']).strip()
+            forecast_data['forecast_event_outcome'] = get_forecast_event_outcome(forecast_data['forecast_link']).strip()
         except AttributeError:
-            forecast_data['forecast_description'] = None
+            forecast_data['forecast_event_outcome'] = None
         try:
             forecast_data['forecast_date'] = get_forecast_date(forecast_data['forecast_link'])
         except AttributeError:
@@ -77,11 +93,13 @@ def format_to_string(forecast):
     template = "    1. {forecast_title}     \n " \
                "    2. {forecast_date}     \n " \
                "    3. {forecast_coefficient}     \n " \
+               "    4. {forecast_event_outcome}     \n " \
                "    4. {forecast_description}     \n " \
                "    5. {forecast_link}     "
     formatted_message = template.format(forecast_title=forecast['forecast_title'],
                                         forecast_date=forecast['forecast_date'],
                                         forecast_coefficient=forecast['forecast_coefficient'],
+                                        forecast_event_outcome=forecast['forecast_event_outcome'],
                                         forecast_description=forecast['forecast_description'],
                                         forecast_link=forecast['forecast_link'])
     return formatted_message

@@ -25,7 +25,11 @@ def parse_forecasts(page):
     for forecast in forecasts:
         forecast_data = dict()
         # forecast_data['forecast_title'] = (re.match("(.*?):", forecast.find('div', class_='top-article').find('div', class_='vps-h3').text).group()).replace(':', '')
-        forecast_data['forecast_title'] = forecast.find('span', class_='commands__name').text.strip()
+        command_names = forecast.find('span', class_='commands__name').text.strip()
+        if command_names is not None:
+            forecast_data['forecast_title'] = command_names
+        else:
+            forecast_data['forecast_title'] = forecast.find('div', class_='event__heading').h1.text.strip()
         # forecast_data['forecast_logo'] = forecast.find('div', class_='current-coefficent').span.text
         forecast_data['forecast_date'] = forecast.find('div', class_='game_start').find_all('span')[-1].text.strip().replace('(', '').replace(')', '')
         try:
@@ -33,9 +37,10 @@ def parse_forecasts(page):
         except IndexError:
             forecast_data['forecast_coefficient'] = None
         try:
-            forecast_data['forecast_description'] = forecast.find_all('div', class_='info_match')[0].text.strip()
+            forecast_data['forecast_event_outcome'] = forecast.find_all('div', class_='info_match')[0].text.strip()
         except IndexError:
-            forecast_data['forecast_description'] = None
+            forecast_data['forecast_event_outcome'] = None
+        forecast_data['forecast_description'] = forecast.find('div', class_='info down').find_previous('div', class_='clr').text
         forecast_data['forecast_link'] = '{}'.format(forecast.find('div', class_='title_news').a['href'])
         parsed_forecasts.append(forecast_data)
     return parsed_forecasts
@@ -45,11 +50,13 @@ def format_to_string(forecast):
     template = "    1. {forecast_title}     \n " \
                "    2. {forecast_date}     \n " \
                "    3. {forecast_coefficient}     \n " \
+               "    4. {forecast_event_outcome}     \n " \
                "    4. {forecast_description}     \n " \
                "    5. {forecast_link}     "
     formatted_message = template.format(forecast_title=forecast['forecast_title'],
                                         forecast_date=forecast['forecast_date'],
                                         forecast_coefficient=forecast['forecast_coefficient'],
+                                        forecast_event_outcome=forecast['forecast_event_outcome'],
                                         forecast_description=forecast['forecast_description'],
                                         forecast_link=forecast['forecast_link'])
     return formatted_message
