@@ -17,9 +17,11 @@ def get_date_from_str(date_str):
     for month, month_index in month_dict.items():
         if month in date_str:
             current_month = month_index
-    task_date = now.replace(minute=int(current_minutes), hour=int(current_hours), month=int(current_month), day=int(current_day))
+    task_date = now.replace(minute=int(current_minutes), hour=int(current_hours), month=int(current_month),
+                            day=int(current_day))
     date_time = task_date.strftime("%d-%m-%Y, %H:%M")
     return date_time
+
 
 def get_forecasts_off_all_pages():
     website = 'https://stavka.tv/predictions?page={}'
@@ -35,12 +37,22 @@ def get_forecasts_off_all_pages():
             all_pages.append(soup)
             page += 1
 
+
 def get_forecast_logo(forecast_link):
     response = requests.get(forecast_link)
     soup = BeautifulSoup(response.text, 'lxml')
-    forecast_logo = soup.find('span', class_='UMatchTeam__logo').img['src'].strip()
-    return forecast_logo
-    #
+    first_forecast_logo = soup.find_all('img', class_='UMatchTeam__image')[0]['src']
+    second_forecast_logo = soup.find_all('img', class_='UMatchTeam__image')[1]['src']
+    return first_forecast_logo, second_forecast_logo
+    # BeautifulSoup(requests.get('https://stavka.tv{}'.format(forecast.find('a')['href'])).text, 'lxml').('img', class_='UMatchTeam__image')['src']
+
+
+def get_forecast_logo_try(forecast_link):
+    response = requests.get(forecast_link)
+    soup = BeautifulSoup(response.text, 'lxml')
+    first_forecast_logo = soup.find_all('img', class_='PredictHeader__img')[0]['src']
+    second_forecast_logo = soup.find_all('img', class_='PredictHeader__img')[1]['src']
+    return first_forecast_logo, second_forecast_logo
 
 
 def parse_forecasts(page):
@@ -50,15 +62,23 @@ def parse_forecasts(page):
         forecast_data = dict()
         # forecast_data['forecast_title'] = (re.match("(.*?):", forecast.find('div', class_='top-article').find('div', class_='vps-h3').text).group()).replace(':', '')
         forecast_data['forecast_title'] = forecast.find('div', class_='Prediction__header-name').text.strip()
-        forecast_data['forecast_date'] = get_date_from_str(forecast.find('b', class_='PredictionContent__date-bold').text.strip())
-        forecast_data['forecast_coefficient'] = forecast.find_all('em', class_='PredictionContent__bet-text--em')[1].text.strip()
-        forecast_data['forecast_event_outcome'] = forecast.find_all('em', class_='PredictionContent__bet-text--em')[0].text.strip()
+        forecast_data['forecast_date'] = get_date_from_str(
+            forecast.find('b', class_='PredictionContent__date-bold').text.strip())
+        forecast_data['forecast_coefficient'] = forecast.find_all('em', class_='PredictionContent__bet-text--em')[
+            1].text.strip()
+        forecast_data['forecast_event_outcome'] = forecast.find_all('em', class_='PredictionContent__bet-text--em')[
+            0].text.strip()
         raw_description_list = forecast.find('div', class_='PredictionContent').find_all('p')[0:]
         clear_description = map(lambda raw_desc: raw_desc.text, raw_description_list)
         forecast_data['forecast_description'] = ' '.join(clear_description)
         # ' '.join(map(lambda raw_desc: raw_desc.text, forecast.find('div', class_='PredictionContent').find_all('p', dir="ltr")[0:3]))
         forecast_data['forecast_link'] = 'https://stavka.tv{}'.format(forecast.find('a')['href'])
-        forecast_data['forecast_logo'] = get_forecast_logo(forecast_data['forecast_link'])
+        try:
+            forecast_data['forecast_logo'] = get_forecast_logo(forecast_data['forecast_link'])
+        except IndexError:
+            forecast_data['forecast_logo'] = get_forecast_logo_try(forecast_data['forecast_link'])
+        # except TypeError:
+        #     forecast_data['forecast_logo'] = None
         parsed_forecasts.append(forecast_data)
     return parsed_forecasts
 
@@ -66,11 +86,11 @@ def parse_forecasts(page):
 def format_to_string(forecast):
     template = "    1. {forecast_title}     \n " \
                "    2. {forecast_logo}     \n " \
-               "    2. {forecast_date}     \n " \
-               "    3. {forecast_coefficient}     \n " \
-               "    4. {forecast_event_outcome}     \n " \
-               "    4. {forecast_description}     \n " \
-               "    5. {forecast_link}     "
+               "    3. {forecast_date}     \n " \
+               "    4. {forecast_coefficient}     \n " \
+               "    5. {forecast_event_outcome}     \n " \
+               "    6. {forecast_description}     \n " \
+               "    7. {forecast_link}     "
     formatted_message = template.format(forecast_title=forecast['forecast_title'],
                                         forecast_logo=forecast['forecast_logo'],
                                         forecast_date=forecast['forecast_date'],

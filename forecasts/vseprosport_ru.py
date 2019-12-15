@@ -74,9 +74,10 @@ def parse_forecasts(page):
         else:
             forecast_data['forecast_title'] = forecast.find('div', class_='top-article').find('div',
                                                                                               class_='vps-h3').text
-        # forecast_data['forecast_logo'] = forecast.find('div', class_='current-coefficent').span.text
         forecast_data['forecast_coefficient'] = forecast.find('div', class_='current-coefficent').span.text
         forecast_data['forecast_link'] = forecast.find_parent('a')['href']
+        forecast_data['forecast_logo'] = None
+        forecast_data['forecast_description'] = None
         try:
             forecast_data['forecast_event_outcome'] = get_forecast_event_outcome(forecast_data['forecast_link']).strip()
         except AttributeError:
@@ -91,12 +92,14 @@ def parse_forecasts(page):
 
 def format_to_string(forecast):
     template = "    1. {forecast_title}     \n " \
-               "    2. {forecast_date}     \n " \
-               "    3. {forecast_coefficient}     \n " \
-               "    4. {forecast_event_outcome}     \n " \
-               "    4. {forecast_description}     \n " \
-               "    5. {forecast_link}     "
+               "    2. {forecast_logo}     \n " \
+               "    3. {forecast_date}     \n " \
+               "    4. {forecast_coefficient}     \n " \
+               "    5. {forecast_event_outcome}     \n " \
+               "    6. {forecast_description}     \n " \
+               "    7. {forecast_link}     "
     formatted_message = template.format(forecast_title=forecast['forecast_title'],
+                                        forecast_logo=forecast['forecast_logo'],
                                         forecast_date=forecast['forecast_date'],
                                         forecast_coefficient=forecast['forecast_coefficient'],
                                         forecast_event_outcome=forecast['forecast_event_outcome'],
