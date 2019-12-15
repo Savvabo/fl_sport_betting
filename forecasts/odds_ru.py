@@ -1,8 +1,9 @@
-import requests
-from bs4 import BeautifulSoup
-import json
 import datetime
+import json
 import re
+import requests
+import cssutils
+from bs4 import BeautifulSoup
 
 
 def get_forecasts_off_all_pages():
@@ -30,6 +31,22 @@ def get_forecast_event_outcome(forecast_link):
     return forecast_event_outcome
     # BeautifulSoup(requests.get('https://odds.ru{}'.format(forecast.find('div', class_='forecast-preview__title').a['href'])).text, 'html.parser').find('forecast-bet__info-item').text
 
+
+def get_forecast_logo(forecast_link):
+    response = requests.get(forecast_link)
+    soup = BeautifulSoup(response.text, 'lxml')
+    first_forecast_logo = 'https://{}'.format(soup.find_all('div', class_='forecast-bet__team-logo')[0].img['src'])
+    second_forecast_logo = 'https://{}'.format(soup.find_all('div', class_='forecast-bet__team-logo')[1].img['src'])
+    return first_forecast_logo, second_forecast_logo
+    # BeautifulSoup(requests.get('https://stavka.tv{}'.format(forecast.find('a')['href'])).text, 'lxml').('img', class_='UMatchTeam__image')['src']
+
+
+# def get_forecast_logo_try(forecast_link):
+#     response = requests.get(forecast_link)
+#     soup = BeautifulSoup(response.text, 'lxml')
+#     first_forecast_logo = soup.find_all('img', class_='PredictHeader__img')[0]['src']
+#     second_forecast_logo = soup.find_all('img', class_='PredictHeader__img')[1]['src']
+#     return first_forecast_logo, second_forecast_logo
 
 # def get_forecast_description(forecast_link):
 #     response = requests.get(forecast_link)
@@ -65,7 +82,6 @@ def parse_forecasts(page):
     for forecast in forecasts:
         forecast_data = dict()
         forecast_data['forecast_title'] = forecast.find('div', class_='forecast-preview__title').text.strip()
-        # forecast_data['forecast_logo'] = forecast.find('div', class_='current-coefficent').span.text
         try:
             forecast_data['forecast_date'] = get_date_from_str(
                 forecast.find('div', class_='forecast-preview__date').text.strip())
@@ -78,24 +94,35 @@ def parse_forecasts(page):
             forecast_data['forecast_coefficient'] = None
         forecast_data['forecast_link'] = 'https://odds.ru{}'.format(
             forecast.find('div', class_='forecast-preview__title').a['href'])
-        # forecast_data['forecast_description'] = get_forecast_description(forecast_data['forecast_link'])
+        forecast_data['forecast_logo'] = None
         forecast_data['forecast_description'] = None
         try:
             forecast_data['forecast_event_outcome'] = get_forecast_event_outcome(forecast_data['forecast_link'])
         except AttributeError:
             forecast_data['forecast_event_outcome'] = None
+        try:
+            forecast_data['forecast_logo'] = get_forecast_logo(forecast_data['forecast_link'])
+        except IndexError:
+            div_style = forecast.find('div', class_='forecast-preview__img')['style']
+            style = cssutils.parseStyle(forecast.find('div', class_='forecast-preview__img')['style'])
+            url = style['background-image']
+            url = url.replace('url(', '').replace(')', '')
+            # 'https://odds.ru{}'.format(cssutils.parseStyle(forecast.find('div', class_='forecast-preview__img')['style'])['background-image'].replace('url(', '').replace(')', ''))
+            forecast_data['forecast_logo'] = 'https://odds.ru{}'.format(url)
         parsed_forecasts.append(forecast_data)
     return parsed_forecasts
 
 
 def format_to_string(forecast):
     template = "    1. {forecast_title}     \n " \
-               "    2. {forecast_date}     \n " \
-               "    3. {forecast_coefficient}     \n " \
-               "    4. {forecast_event_outcome}     \n " \
-               "    4. {forecast_description}     \n " \
-               "    5. {forecast_link}     "
+               "    2. {forecast_logo}     \n " \
+               "    3. {forecast_date}     \n " \
+               "    4. {forecast_coefficient}     \n " \
+               "    5. {forecast_event_outcome}     \n " \
+               "    6. {forecast_description}     \n " \
+               "    7. {forecast_link}     "
     formatted_message = template.format(forecast_title=forecast['forecast_title'],
+                                        forecast_logo=forecast['forecast_logo'],
                                         forecast_date=forecast['forecast_date'],
                                         forecast_coefficient=forecast['forecast_coefficient'],
                                         forecast_event_outcome=forecast['forecast_event_outcome'],
