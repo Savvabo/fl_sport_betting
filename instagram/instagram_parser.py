@@ -1,14 +1,13 @@
-import configparser
 from instagram import Account, WebAgent, WebAgentAccount
 from instagram.exceptions import InternetException, UnexpectedResponse
-from mongodb_storage import MDB
+from storage.mongodb_storage import MongoDBStorage
 from multiprocessing.pool import ThreadPool
 import logging
-from proxy_helper import ProxyHelper
+from helpers.proxy_helper import ProxyHelper
 import random
-import traceback
 import requests
 import time
+from helpers.helpers import parse_config, chunkify
 logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
                     level=logging.DEBUG)
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -18,21 +17,15 @@ logging.getLogger("connectionpool").setLevel(logging.WARNING)
 
 class InstagramParser:
     def __init__(self, resources):
-        self.config = configparser.ConfigParser()
-        self.config.read('config.ini')
+        self.config = parse_config('instagram')
         self.resources = resources
         self.anon_agent = WebAgent()
-        self.logged_agent = WebAgentAccount(self.config['instagram']['LOGIN'])
-        self.logged_agent.auth(self.config['instagram']['PASSWORD'])
+        self.logged_agent = WebAgentAccount(self.config['LOGIN'])
+        self.logged_agent.auth(self.config['PASSWORD'])
         self.agent = self.anon_agent
-        self.mdb = MDB()
+        self.mdb = MongoDBStorage()
         self.proxy_list = self.get_proxies()
         self.use_proxy = False
-
-    @staticmethod
-    def chunkify(l, n):
-        for i in range(0, len(l), n):
-            yield l[i:i + n]
 
     def check_proxy(self, proxy):
         try:
@@ -67,8 +60,8 @@ class InstagramParser:
         return sorted_proxies
 
     def get_proxies(self):
-        raw_proxies = ProxyHelper().load_proxies_list()
-        chunks = list(self.chunkify(raw_proxies, 500))
+        raw_proxies = ProxyHelper().load_proxies_list()[:500]
+        chunks = list(chunkify(raw_proxies, 500))
         valid_proxies = {}
         for n, chunk in enumerate(chunks):
             logging.info('checking {}/{} proxy batch'.format(n+1, len(chunks)))
@@ -166,7 +159,7 @@ class InstagramParser:
         new_posts = []
         pointer = None
         self.insta_request(data=self.resource)
-        posts_count = self.resource.media_count
+        posts_count = 100# self.resource.media_count
         posts_scraped = 0
         while posts_count > posts_scraped:
             try:
@@ -213,6 +206,8 @@ class InstagramParser:
         post_data['link'] = 'https://www.instagram.com/p/{post_id}'.format(post_id=post_data['_id'])
         post_data['resource'] = self.resource.__str__()
         post_data['icon'] = self.resource.profile_pic_url
+        post_data['is_album'] = post.is_album
+        post_data['is_video'] = post.is_video
         return post_data
 
     def parse_post(self, post):
@@ -231,6 +226,7 @@ class InstagramParser:
         # chunks = list(self.chunkify(posts, 500))
         # for n, chunk in enumerate(chunks):
         # logging.info('processing {}/{} posts batch'.format(n + 1, len(chunks)))
+        posts = posts[::-1]
         pool = ThreadPool(50)
         parsed_posts = list(pool.map(self.parse_post, posts))
         pool.close()
