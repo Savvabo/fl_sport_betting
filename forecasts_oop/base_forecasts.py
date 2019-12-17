@@ -5,7 +5,7 @@ from multiprocessing.pool import ThreadPool
 import logging
 from functools import reduce
 from helpers.downloader_helper import Downloader
-from bs4 import BeautifulSoup
+import ast
 logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
                     level=logging.DEBUG)
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -21,34 +21,38 @@ class BaseExchanger(ABC):
         self.downloader = Downloader()
 
     def get_parsed_forecasts(self):
-        parsed_forecasts = self.mdb.get_forecasts(self.__resource_name__)
-        return parsed_forecasts
+        try:
+            parsed_forecasts = self.mdb.get_forecasts(self.__resource_name__)
+            return parsed_forecasts
+        except AttributeError:
+            raise Exception('resource_name was not provided')
 
     def is_forecast_in_db(self, forecast_id):
         if forecast_id in self.parsed_forecasts:
             return True
 
-    def get_soups_from_page_numbers(self, page_numbers):
+    def get_prettify_pages(self, page_numbers):
         pool = ThreadPool(int(self.config['scraping_pool_size']))
         # creating links to selected page
         urls_to_scrape = list(map(self.create_scrape_url, page_numbers))
         # request to pages
-        response_pages = list(pool.map(self.downloader.get, urls_to_scrape))
-        # making soup from response
-        soup_pages = list(map(lambda response: BeautifulSoup(response.text, 'lxml'), response_pages))
+        response_pages = list(pool.map(lambda url: self.downloader.get(url, top_proxies=10), urls_to_scrape))
+        # making prettify_data from response
+        pretty_pages = list(map(self.get_prettify_page, response_pages))
         pool.close()
-        return soup_pages
+        return pretty_pages
 
     def scrape_forecasts(self):
         start_page = 1
         all_forecasts = []
+        scraping_limit = ast.literal_eval(self.config['scraping_limit'])
         while True:
             # creating list of pages we should to scrape
             end_page = start_page + int(self.config['scraping_pool_size'])
             page_numbers = list(range(start_page, end_page))
-            soup_pages = self.get_soups_from_page_numbers(page_numbers)
+            prettify_pages = self.get_prettify_pages(page_numbers)
             # get all forecasts on each page
-            batch_forecasts = list(map(self.get_forecasts_on_page, soup_pages))
+            batch_forecasts = list(map(self.get_forecasts_on_page, prettify_pages))
             # flatting them
             flat_forecasts = reduce(lambda x, y: x + y, batch_forecasts)
             # get uniq forecast id
@@ -60,11 +64,11 @@ class BaseExchanger(ABC):
             start_page += len(page_numbers)
             if in_db_check:
                 break
-            elif start_page >= int(self.config['scraping_limit']):
+            elif scraping_limit and end_page >= int(self.config['scraping_limit']):
                 logging.info('scraping limit is reached')
                 break
         logging.info(
-            '{} pages parsed, scraping finished, found {} forecasts'.format(start_page, len(all_forecasts)))
+            'all pages parsed, scraping finished, found {} forecasts'.format(len(all_forecasts)))
         return all_forecasts
 
     def parse_forecasts(self, forecasts):
@@ -73,6 +77,9 @@ class BaseExchanger(ABC):
         pool.close()
         return parsed_forecasts
 
+    @abstractmethod
+    def get_prettify_page(self, response):
+        pass
 
     @abstractmethod
     def get_forecast_date(self, forecast):
@@ -83,6 +90,10 @@ class BaseExchanger(ABC):
         pass
 
     @abstractmethod
+    def get_event_outcomes(self, *args, **kwargs):
+        pass
+
+    @abstractmethod
     def get_forecast_title(self, forecast):
         pass
 
@@ -90,9 +101,6 @@ class BaseExchanger(ABC):
     def parse_single_forecast(self, forecast):
         pass
 
-    @abstractmethod
-    def get_forecast_add_info(self, **kwargs):
-        pass
 
     @abstractmethod
     def get_forecasts_on_page(self, page):

@@ -37,7 +37,6 @@ class InstagramParser:
             request_time = time.time() - t1
             return {'address': proxy, 'is_valid': True, 'request_time': request_time}
 
-            # return {'address': proxy, 'is_valid': True}
         except:
             return {'address': proxy, 'is_valid': False}
 
@@ -60,7 +59,7 @@ class InstagramParser:
         return sorted_proxies
 
     def get_proxies(self):
-        raw_proxies = ProxyHelper().load_proxies_list()[:500]
+        raw_proxies = ProxyHelper('instagram').load_proxies_list()[:500]
         chunks = list(chunkify(raw_proxies, 500))
         valid_proxies = {}
         for n, chunk in enumerate(chunks):
