@@ -15,6 +15,10 @@ class StavkaTV(BaseExchanger, ABC):
         self.domain = 'https://stavka.tv'
         super().__init__()
 
+    def is_last_page(self, soup):
+        if not soup.find('div', class_='Predictions__container'):
+            return True
+
     def create_scrape_url(self, page_num):
         pattern = '{}/predictions?page={}'
         return pattern.format(self.domain, page_num)
@@ -39,7 +43,13 @@ class StavkaTV(BaseExchanger, ABC):
         return forecast.find_all('em', class_='PredictionContent__bet-text--em')[1].text.strip()
 
     def get_event_outcomes(self, forecast):
-        return [forecast.find_all('em', class_='PredictionContent__bet-text--em')[0].text.strip()]
+        event_outcomes_raw = [forecast.find_all('em', class_='PredictionContent__bet-text--em')[0].text.strip()]
+        event_outcomes = []
+        for event_outcome_raw in event_outcomes_raw:
+            event_outcome = ' '.join(event_outcome_raw.split(' ')[:-1])
+            coefficient = float(event_outcome_raw.split(' ')[-1].replace(',', '.'))
+            event_outcomes.append({'event_outcome': event_outcome, 'coefficient': coefficient})
+        return event_outcomes
 
     def get_forecast_date(self, forecast):
         date_string = forecast.find('b', class_='PredictionContent__date-bold').text.strip()

@@ -21,6 +21,10 @@ class VseprosportForecasts(BaseExchanger, ABC):
         self.domain = 'https://www.vseprosport.ru'
         super().__init__()
 
+    def is_last_page(self, soup):
+        if not soup.find('div', class_='list-view'):
+            return True
+
     def get_prettify_page(self, response):
         return BeautifulSoup(response.text, 'lxml')
 
@@ -224,14 +228,13 @@ class VseprosportForecasts(BaseExchanger, ABC):
         coefficient = self.get_forecast_coefficient(forecast)
         tournament = self.get_forecast_tournament(forecast)
         forecast_date = self.get_forecast_date(forecast)
-        additional_info, event_outcomes = self.get_forecast_add_info(_id, forecast_date, event_type)
-        additional_info.pop('event_outcomes')
+        additional_info, events_outcomes = self.get_forecast_add_info(_id, forecast_date, event_type)
         forecast_object = Forecast(_id=_id,
                                    title=title,
                                    coefficient=coefficient,
                                    resource=self.__resource_name__,
                                    forecast_date=forecast_date,
-                                   event_outcomes=event_outcomes,
+                                   event_outcomes=events_outcomes,
                                    tournament=tournament,
                                    event_type=event_type,
                                    **additional_info)

@@ -31,18 +31,18 @@ class BaseExchanger(ABC):
         if forecast_id in self.parsed_forecasts:
             return True
 
-    def get_prettify_pages(self, page_numbers):
+    def get_prettify_pages(self, page_numbers, request_data={}):
         pool = ThreadPool(int(self.config['scraping_pool_size']))
         # creating links to selected page
         urls_to_scrape = list(map(self.create_scrape_url, page_numbers))
         # request to pages
-        response_pages = list(pool.map(lambda url: self.downloader.get(url, top_proxies=10), urls_to_scrape))
+        response_pages = list(pool.map(lambda url: self.downloader.get(url, top_proxies=10, **request_data), urls_to_scrape))
         # making prettify_data from response
         pretty_pages = list(map(self.get_prettify_page, response_pages))
         pool.close()
         return pretty_pages
 
-    def scrape_forecasts(self):
+    def scrape_forecasts(self, request_data={}):
         start_page = 1
         all_forecasts = []
         scraping_limit = ast.literal_eval(self.config['scraping_limit'])
@@ -50,7 +50,8 @@ class BaseExchanger(ABC):
             # creating list of pages we should to scrape
             end_page = start_page + int(self.config['scraping_pool_size'])
             page_numbers = list(range(start_page, end_page))
-            prettify_pages = self.get_prettify_pages(page_numbers)
+            prettify_pages = self.get_prettify_pages(page_numbers, request_data)
+            is_last_page = list(filter(self.is_last_page, prettify_pages))
             # get all forecasts on each page
             batch_forecasts = list(map(self.get_forecasts_on_page, prettify_pages))
             # flatting them
@@ -62,7 +63,10 @@ class BaseExchanger(ABC):
             all_forecasts.extend(flat_forecasts)
             logging.info('scraped {} pages'.format(page_numbers[-1]))
             start_page += len(page_numbers)
+            if is_last_page:
+                logging.info(f'reached last page, is {page_numbers[-1]}')
             if in_db_check:
+                logging.info('Next pages already parsed')
                 break
             elif scraping_limit and end_page >= int(self.config['scraping_limit']):
                 logging.info('scraping limit is reached')
@@ -112,6 +116,10 @@ class BaseExchanger(ABC):
 
     @abstractmethod
     def get_forecast_id(self, forecast):
+        pass
+
+    @abstractmethod
+    def is_last_page(self, page):
         pass
 
 
