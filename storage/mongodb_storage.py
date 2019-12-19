@@ -26,8 +26,9 @@ class MongoDBStorage:
 
     def add_new_forecasts(self, forecasts):
         forecasts_list = [forecast.get_data() for forecast in forecasts]
-        docs = [UpdateOne({'_id': forecast_data['_id']}, {'$set': forecast_data},upsert=True) for forecast_data in forecasts_list]
-        self.client[self.config['FORECASTS_COLLECTION']].bulk_write(docs)
+        docs = [UpdateOne({'_id': forecast_data['_id']}, {'$set': forecast_data}, upsert=True) for forecast_data in forecasts_list]
+        if docs:
+            self.client[self.config['FORECASTS_COLLECTION']].bulk_write(docs)
 
     def add_new_posts(self, posts):
         docs = [UpdateOne({'_id': post['_id']}, {'$set': post}, upsert=True) for post in posts]
@@ -36,7 +37,7 @@ class MongoDBStorage:
 
 
 class Forecast(MongoDBStorage, dict):
-    def __init__(self, *, _id, title, coefficient, resource, forecast_date, event_outcomes, **kwargs):
+    def __init__(self, *, _id, title, coefficient, resource, forecast_date, events_outcomes, event_type, category, **kwargs):
         super().__init__()
         self.data = {'additional_info': {}}
         self['_id'] = _id
@@ -44,7 +45,9 @@ class Forecast(MongoDBStorage, dict):
         self['coefficient'] = coefficient
         self['resource'] = resource
         self['date'] = forecast_date
-        self['event_outcomes'] = event_outcomes
+        self['events_outcomes'] = events_outcomes
+        self['event_type'] = event_type
+        self['category'] = category
         self.data['additional_info'].update(kwargs)
 
     def __setitem__(self, key, value):

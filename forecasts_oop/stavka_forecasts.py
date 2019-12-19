@@ -7,6 +7,7 @@ from storage.mongodb_storage import Forecast
 import pytz
 import datetime
 import re
+from helpers.category_translation import category_translation
 
 
 class StavkaTV(BaseExchanger, ABC):
@@ -16,7 +17,7 @@ class StavkaTV(BaseExchanger, ABC):
         super().__init__()
 
     def is_last_page(self, soup):
-        if not soup.find('div', class_='Predictions__container'):
+        if soup.find('div', class_='Predictions__empty'):
             return True
 
     def create_scrape_url(self, page_num):
@@ -42,13 +43,14 @@ class StavkaTV(BaseExchanger, ABC):
     def get_forecast_coefficient(self, forecast):
         return forecast.find_all('em', class_='PredictionContent__bet-text--em')[1].text.strip()
 
-    def get_event_outcomes(self, forecast):
-        event_outcomes_raw = [forecast.find_all('em', class_='PredictionContent__bet-text--em')[0].text.strip()]
+    def get_events_outcomes(self, forecast):
+        event_outcomes_raw = [forecast.find_all('em', class_='PredictionContent__bet-text--em')]
         event_outcomes = []
         for event_outcome_raw in event_outcomes_raw:
-            event_outcome = ' '.join(event_outcome_raw.split(' ')[:-1])
-            coefficient = float(event_outcome_raw.split(' ')[-1].replace(',', '.'))
-            event_outcomes.append({'event_outcome': event_outcome, 'coefficient': coefficient})
+            event_outcome = event_outcome_raw[0].text
+            coefficient = event_outcome_raw[1].text
+            event_name = self.get_forecast_title(forecast)
+            event_outcomes.append({'event_outcome': event_outcome, 'coefficient': coefficient, 'event_name': event_name})
         return event_outcomes
 
     def get_forecast_date(self, forecast):
@@ -92,26 +94,33 @@ class StavkaTV(BaseExchanger, ABC):
         additional_info['logos'] = self.get_forecast_logos(soup)
         return additional_info
 
+    def get_category(self, forecast):
+        category_raw = forecast.find('a', class_='PredictionContent__link-sport').text.replace('\n', '').strip()
+        category = category_translation[category_raw]
+        return category
+
     @staticmethod
     def get_teams(forecast):
-        return [team_name.text for team_name in forecast.find_all('div',class_='PredictionContent__team-name')]
+        return [team_name.text for team_name in forecast.find_all('div', class_='PredictionContent__team-name')]
 
     def parse_single_forecast(self, forecast):
-        logging.info('parsing forecast')
         _id = self.get_forecast_id(forecast)
         title = self.get_forecast_title(forecast)
         coefficient = float(self.get_forecast_coefficient(forecast))
-        event_outcomes = self.get_event_outcomes(forecast)
+        event_outcomes = self.get_events_outcomes(forecast)
         forecast_date = self.get_forecast_date(forecast)
         additional_info = self.get_forecast_add_info(_id)
         additional_info['forecast'] = self.get_forecast_text(forecast)
         additional_info['teams'] = self.get_teams(forecast)
+        category = self.get_category(forecast)
         forecast_object = Forecast(_id=_id,
                                    title=title,
                                    coefficient=coefficient,
                                    resource=self.__resource_name__,
                                    forecast_date=forecast_date,
-                                   event_outcomes=event_outcomes,
+                                   events_outcomes=event_outcomes,
+                                   event_type='Solo',
+                                   category=category,
                                    **additional_info)
         return forecast_object
 

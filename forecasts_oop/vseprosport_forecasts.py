@@ -6,7 +6,7 @@ import logging
 from storage.mongodb_storage import Forecast
 import pytz
 from forecasts_oop.base_forecasts import BaseExchanger
-
+from helpers.category_translation import category_translation
 logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
                     level=logging.DEBUG)
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -22,7 +22,7 @@ class VseprosportForecasts(BaseExchanger, ABC):
         super().__init__()
 
     def is_last_page(self, soup):
-        if not soup.find('div', class_='list-view'):
+        if soup.find('div', class_='list-view').find('div',class_='empty'):
             return True
 
     def get_prettify_page(self, response):
@@ -74,19 +74,51 @@ class VseprosportForecasts(BaseExchanger, ABC):
     def get_superexpress_maintext(soup):
         return soup.find('section', class_='news_content').text
 
-    @staticmethod
-    def get_events_outcomes(soup, event_type):
+    def get_events_outcomes(self, soup, event_type, teams=()):
+        events_outcomes = []
+
         if event_type == 'Superexpress':
-            events_outcomes = [outcome.text.strip() for outcome in
-                               soup.find_all('div', {'style': 'text-align: justify;'}, text=re.compile('[0-9] .*:'))]
+            for raw_event_outcome in soup.find_all('div', {'style': 'text-align: justify;'}, text=re.compile('[0-9] .*:')):
+                event_outcome = raw_event_outcome.text.split(':')[1].strip()
+                coefficient = None
+                event_name = re.sub('[0-9]', '', raw_event_outcome.text.split(':')[0]).strip()
+                events_outcomes.append({'event_outcome': event_outcome,
+                                        'coefficient': coefficient,
+                                        'event_name': event_name})
         elif event_type == 'Express':
-            events_outcomes = [outcome.text.strip() for outcome in soup.find_all('div', class_='bookmaker_express_time_total')]
+            for raw_event_outcome in soup.find_all('div', class_='bookmaker_express_time_total'):
+                splited_outcome = raw_event_outcome.text.strip().split(', ')
+                event_outcome = splited_outcome[2]
+                coefficient = splited_outcome[-1]
+                event_name = splited_outcome[1]
+                events_outcomes.append({'event_outcome': event_outcome,
+                                        'coefficient': coefficient,
+                                        'event_name': event_name})
         else:
-            events_outcomes = [bet_block.find('div', class_='title').text.replace('Ставка: ', '') for bet_block in
-                               soup.find_all('div', class_='news_custom_prognoz_name')]
+            for raw_event_outcome in soup.find_all('div', class_='news_custom_prognoz_name'):
+                event_outcome = raw_event_outcome.find('div', class_='title').text.replace('Ставка: ', '')
+                coefficient = float(raw_event_outcome.find_next('ul', class_='news_custom_prognoz_items').li.find_all('p')[-1].span.text)
+                event_name = ' - '.join(teams)
+                events_outcomes.append({'event_outcome': event_outcome,
+                                        'coefficient': coefficient,
+                                        'event_name': event_name})
+
             if not events_outcomes:
-                bet_block = soup.find('h2', class_='vps-h2', text=' Прогноз ')
-                events_outcomes = [bet_block.find_next('ul').find_all('li')[1].text.replace('\n', '').strip()]
+                try:
+                    bet_block = soup.find('ul', class_='justifyed-list')
+                    event_outcome = bet_block.find_all('li')[1].text.replace('\n', '').strip()
+                    coefficient = float(bet_block.find_all('li')[-2].text.replace('\n', '').strip())
+                    event_name = ' - '.join(teams)
+                    events_outcomes.append({'event_outcome': event_outcome,
+                                        'coefficient': coefficient,
+                                        'event_name': event_name,
+                                        'test':True})
+                except:
+
+                    events_outcomes.append({'event_outcome': None,
+                                            'coefficient': None,
+                                            'event_name': None})
+
         return events_outcomes
 
     @staticmethod
@@ -133,7 +165,7 @@ class VseprosportForecasts(BaseExchanger, ABC):
         events_outcomes = self.get_events_outcomes(soup, 'Superexpress')
         teams = []
         for event_outcome in events_outcomes:
-            clear_outcome = re.search('[^0-9]+', event_outcome).group(0).split(':')[0].replace('–', '-').replace('—', '-').strip()
+            clear_outcome = re.search('[^0-9]+', event_outcome['event_name']).group(0).split(':')[0].replace('–', '-').replace('—', '-').strip()
             outcome_teams = [team.strip() for team in clear_outcome.split(' - ')]
             teams.extend(outcome_teams)
         return teams
@@ -146,8 +178,8 @@ class VseprosportForecasts(BaseExchanger, ABC):
 
     def create_solo_data(self, soup):
         solo_data = dict()
-        events_outcomes = self.get_events_outcomes(soup, 'solo')
         solo_data['teams'] = self.get_solo_teams(soup)
+        events_outcomes = self.get_events_outcomes(soup, 'solo', solo_data['teams'])
         try:
             about_team_blocks = soup.find_all('div', class_='about_team')[:-1]
             solo_data['about_teams'] = list(map(self.parse_team_description, about_team_blocks))
@@ -163,7 +195,7 @@ class VseprosportForecasts(BaseExchanger, ABC):
         return solo_data, events_outcomes
 
     def get_forecast_add_info(self, link, forecast_date, event_type):
-        response = self.downloader.get(link, top_proxies=10)
+        response = self.downloader.get(link, top_proxies=10, timeout=30)
         if response.status_code >= 400:
             return
         soup = BeautifulSoup(response.text, 'lxml')
@@ -201,6 +233,11 @@ class VseprosportForecasts(BaseExchanger, ABC):
             tournament = None
         return tournament
 
+    def get_category(self, forecast):
+        category_raw = forecast.find('img', class_='img-responsive')['title']
+        category = category_translation[category_raw]
+        return category
+
     def get_forecast_date(self, forecast):
         date_string = forecast.find('p', class_='time').text
         time_parts = re.findall('[0-9]{2}', date_string)
@@ -217,26 +254,25 @@ class VseprosportForecasts(BaseExchanger, ABC):
         event_timestamp = event_time.timestamp()
         return event_timestamp
 
-    def get_event_outcomes(self, additional_info):
-        return additional_info.pop('event_outcomes')
-
     def parse_single_forecast(self, forecast):
-        logging.info('parsing forecast')
         _id = self.get_forecast_id(forecast)
+        self._id = _id
         title = self.get_forecast_title(forecast)
         event_type = self.get_forecast_type(title)
         coefficient = self.get_forecast_coefficient(forecast)
         tournament = self.get_forecast_tournament(forecast)
         forecast_date = self.get_forecast_date(forecast)
         additional_info, events_outcomes = self.get_forecast_add_info(_id, forecast_date, event_type)
+        category = self.get_category(forecast)
         forecast_object = Forecast(_id=_id,
                                    title=title,
                                    coefficient=coefficient,
                                    resource=self.__resource_name__,
                                    forecast_date=forecast_date,
-                                   event_outcomes=events_outcomes,
+                                   events_outcomes=events_outcomes,
                                    tournament=tournament,
                                    event_type=event_type,
+                                   category=category,
                                    **additional_info)
 
         return forecast_object
@@ -244,6 +280,7 @@ class VseprosportForecasts(BaseExchanger, ABC):
     def run(self):
         all_forecasts = self.scrape_forecasts()
         parsed_forecasts = self.parse_forecasts(all_forecasts)
+
         self.mdb.add_new_forecasts(parsed_forecasts)
 
 

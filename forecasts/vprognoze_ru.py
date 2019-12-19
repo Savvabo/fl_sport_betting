@@ -27,7 +27,7 @@ def get_forecasts_off_all_pages():
         print(page)
         response = requests.get(website.format(page))
         soup = BeautifulSoup(response.text, 'lxml')
-        if not soup.find('div', id='dle-content') or page == 200:
+        if not soup.find('div', id='dle-content') or page == 20:
             return all_pages
         else:
             all_pages.append(soup)
@@ -54,7 +54,7 @@ def parse_forecasts(page):
         except IndexError:
             forecast_data['forecast_event_outcome'] = None
         forecast_data['forecast_description'] = forecast.find('div', class_='info down').find_previous('div', class_='clr').text
-        forecast_data['forecast_link'] = '{}'.format(forecast.find('div', class_='title_news').a['href'])
+        forecast_data['forecast_link'] = forecast.find('div', class_='title_news').a['href']
         try:
             forecast_data['forecast_logo'] = get_forecast_logo(forecast_data['forecast_link'])
         except IndexError:

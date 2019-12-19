@@ -6,6 +6,7 @@ import logging
 from functools import reduce
 from helpers.downloader_helper import Downloader
 import ast
+from helpers.helpers import chunkify
 logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
                     level=logging.DEBUG)
 logging.getLogger("requests").setLevel(logging.WARNING)
@@ -65,19 +66,24 @@ class BaseExchanger(ABC):
             start_page += len(page_numbers)
             if is_last_page:
                 logging.info(f'reached last page, is {page_numbers[-1]}')
+                break
             if in_db_check:
                 logging.info('Next pages already parsed')
                 break
             elif scraping_limit and end_page >= int(self.config['scraping_limit']):
                 logging.info('scraping limit is reached')
                 break
-        logging.info(
-            'all pages parsed, scraping finished, found {} forecasts'.format(len(all_forecasts)))
+        logging.info('all pages scraped, scraping finished, found {} forecasts'.format(len(all_forecasts)))
         return all_forecasts
 
     def parse_forecasts(self, forecasts):
         pool = ThreadPool(int(self.config['parsing_pool_size']))
-        parsed_forecasts = list(pool.map(self.parse_single_forecast, forecasts))
+        chunks = list(chunkify(forecasts, len(forecasts) // 10))
+        parsed_forecasts = []
+        for n, chunk in enumerate(chunks):
+            logging.info('parsed {}/{} forecasts chunks'.format(n+1, len(chunks)))
+            parsed_chunk = list(pool.map(self.parse_single_forecast, chunk))
+            parsed_forecasts.extend(parsed_chunk)
         pool.close()
         return parsed_forecasts
 
@@ -90,11 +96,11 @@ class BaseExchanger(ABC):
         pass
 
     @abstractmethod
-    def get_forecast_coefficient(self, forecast):
+    def get_forecast_coefficient(self, forecast, *args, **kwargs):
         pass
 
     @abstractmethod
-    def get_event_outcomes(self, *args, **kwargs):
+    def get_events_outcomes(self, *args, **kwargs):
         pass
 
     @abstractmethod
@@ -120,6 +126,10 @@ class BaseExchanger(ABC):
 
     @abstractmethod
     def is_last_page(self, page):
+        pass
+
+    @abstractmethod
+    def get_category(self, *args, **kwargs):
         pass
 
 

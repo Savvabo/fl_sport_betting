@@ -7,6 +7,7 @@ from storage.mongodb_storage import Forecast
 import pytz
 from forecasts_oop.base_forecasts import BaseExchanger
 import json
+from helpers.category_translation import category_translation
 
 logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
                     level=logging.DEBUG)
@@ -52,7 +53,8 @@ class OddsForecasts(BaseExchanger, ABC):
     def get_forecast_coefficient(self, soup, event_outcomes=()):
         try:
             raw_coefficient = soup.find('a', class_='forecast-bet__info-item forecast-bet__info-item--coeff').text
-            coefficient = float(re.sub('коэф\.', '', raw_coefficient, flags=re.IGNORECASE).replace(':', '').replace('\n', '').strip())
+            coefficient = float(re.sub('коэф\.', '', raw_coefficient,
+                                       flags=re.IGNORECASE).replace(':', '').replace('\n', '').strip())
         except AttributeError:
             if event_outcomes:
                 coefficient = event_outcomes[0]['coefficient']
@@ -91,14 +93,20 @@ class OddsForecasts(BaseExchanger, ABC):
         logos = ['https:' + logo.img['src'] for logo in soup.find_all('div', class_='forecast-bet__team-logo')]
         return logos
 
-    def get_event_outcomes(self, soup):
+    def get_events_outcomes(self, soup):
         event_outcomes_raw = soup.find_all('div', class_='bet-data')
         event_outcomes = []
-        for raw_event_outcome in event_outcomes_raw:
-            event_outcome = raw_event_outcome.find('div', class_='rate-name-text').text
-            raw_coefficient = raw_event_outcome.find('div', class_='rate-value').text.replace('коэф.\n', '').strip()
-            coefficient = float(re.sub('коэф\.', '', raw_coefficient, flags=re.IGNORECASE).replace(':', '').replace('\n', '').strip())
-            event_outcomes.append({'event_outcome': event_outcome, 'coefficient': coefficient})
+        if event_outcomes_raw:
+            event_name = soup.find('div', class_='bet-main-info').contents[-1]
+            for raw_event_outcome in event_outcomes_raw:
+                event_outcome = raw_event_outcome.find('div', class_='rate-name-text').text
+                raw_coefficient = raw_event_outcome.find('div', class_='rate-value').text.replace('коэф.\n', '').strip()
+                coefficient = float(
+                    re.sub('коэф\.', '', raw_coefficient, flags=re.IGNORECASE).replace(':', '').replace('\n',
+                                                                                                        '').strip())
+                event_outcomes.append(
+                    {'event_outcome': event_outcome, 'coefficient': coefficient, 'event_name': event_name})
+
         return event_outcomes
 
     @staticmethod
@@ -120,6 +128,11 @@ class OddsForecasts(BaseExchanger, ABC):
         forecast = soup.find('div', class_='forecast-text post-main-content').text
         return forecast
 
+    def get_category(self, soup):
+        category_raw = soup.find_all('li', typeof='v:Breadcrumb')[1].text.split(' ')[-1].replace('\n', '').strip().title()
+        category = category_translation[category_raw]
+        return category
+
     def get_forecast_add_info(self, link):
         additional_info = dict()
         response = self.downloader.get(link, top_proxies=10)
@@ -127,22 +140,24 @@ class OddsForecasts(BaseExchanger, ABC):
         additional_info['logos'] = self.get_forecast_logos(soup)
         additional_info['forecast'] = self.get_forecast(soup)
         additional_info['teams'] = self.get_teams(soup)
-        event_outcomes = self.get_event_outcomes(soup)
+        event_outcomes = self.get_events_outcomes(soup)
         coefficient = self.get_forecast_coefficient(soup, event_outcomes)
-        return additional_info, event_outcomes, coefficient
+        category = self.get_category(soup)
+        return additional_info, event_outcomes, coefficient, category
 
     def parse_single_forecast(self, forecast):
-        logging.info('parsing forecast')
         _id = self.get_forecast_id(forecast)
         title = self.get_forecast_title(forecast)
-        additional_info, event_outcomes, coefficient = self.get_forecast_add_info(_id)
+        additional_info, event_outcomes, coefficient, category = self.get_forecast_add_info(_id)
         forecast_date = self.get_forecast_date(forecast)
         forecast_object = Forecast(_id=_id,
                                    title=title,
                                    coefficient=coefficient,
                                    resource=self.__resource_name__,
                                    forecast_date=forecast_date,
-                                   event_outcomes=event_outcomes,
+                                   events_outcomes=event_outcomes,
+                                   event_type='Solo',
+                                   category=category,
                                    **additional_info)
         return forecast_object
 

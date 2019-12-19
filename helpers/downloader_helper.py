@@ -14,15 +14,21 @@ logging.getLogger("connectionpool").setLevel(logging.WARNING)
 class Downloader:
     def __init__(self, use_proxy=True, attempts=20, use_user_agents=True, use_session=False):
         self.use_proxy = use_proxy
-        self.request_maker = requests.Session() if use_proxy else requests
         self.use_session = use_session
+        self.update_request_maker()
         if use_proxy:
             self.proxy_helper = ProxyHelper()
         self.attempts = attempts
         self.use_user_agents = use_user_agents
         self.user_agents_list = self.load_user_agents()
 
-    def create_request(self, method, url, cookies={}, data={}, headers={}, timeout=60, files=None, top_proxies=100):
+    def update_request_maker(self):
+        if self.use_session:
+            self.request_maker = requests.Session()
+        else:
+            self.request_maker = requests
+
+    def create_request(self, method, url, cookies=None, data={}, headers={}, timeout=60, files=None, top_proxies=100):
         @self.proxy_helper.exception_decorator
         def request_to_page(proxy, **kwargs):
             proxies = {'https': proxy, 'http': proxy}
@@ -52,7 +58,7 @@ class Downloader:
             except Exception as e:
                 logging.debug('received exception on request on {} try'.format(self.attempts - attempts))
 
-    def get(self, url, cookies={}, data={},  headers={}, timeout=60, top_proxies=100):
+    def get(self, url, cookies=None, data={},  headers={}, timeout=60, top_proxies=100):
         return self.create_request(method='GET',
                                    url=url,
                                    cookies=cookies,
@@ -61,7 +67,7 @@ class Downloader:
                                    timeout=timeout,
                                    top_proxies=top_proxies)
 
-    def post(self, url, cookies={}, data={}, headers={}, timeout=60, files=None, top_proxies=100):
+    def post(self, url, cookies=None, data={}, headers={}, timeout=60, files=None, top_proxies=100):
         return self.create_request(method='POST',
                                    url=url,
                                    cookies=cookies,
