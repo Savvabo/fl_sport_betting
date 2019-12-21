@@ -8,12 +8,24 @@ import pytz
 from forecasts_oop.base_forecasts import BaseExchanger
 import json
 from helpers.category_translation import category_translation
+import random
 
-logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
-                    level=logging.DEBUG)
-logging.getLogger("requests").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("connectionpool").setLevel(logging.WARNING)
+HEADERS = [{
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36',
+    'Accept': 'application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-us',
+    'Accept-Encoding': 'gzip, deflate',
+    'Content-Type': 'application/json,text/html,application/x-www-form-urlencoded'
+},
+    {
+    'User-Agent': "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.12; rv:50.0) Gecko/20100101 Firefox/50.0",
+    'Accept': "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    'Accept-Language': "en-US;q=0.7,en;q=0.3",
+    'Accept-Encoding': "gzip, deflate",
+    'cache-control': "no-cache",
+    'Connection': "keep-alive"
+}
+]
 
 
 class OddsForecasts(BaseExchanger, ABC):
@@ -22,23 +34,26 @@ class OddsForecasts(BaseExchanger, ABC):
         self.domain = 'https://odds.ru'
         super().__init__()
 
+    def is_need_to_reparse(self, soup):
+        return False
+
     def get_forecasts_on_page(self, page):
-        expected_count = 200
+        expected_count = 25
         forecasts = page.find_all('div', class_='forecast-item')
         if len(forecasts) != expected_count:
             logging.warning('received {} forecasts, but expected {}'.format(len(forecasts), expected_count))
         return forecasts
 
-    def get_forecast_id(self, forecast):
-        _id = self.domain + forecast.find('div', class_='forecast-preview__title').a['href']
-        return _id
+    def get_forecast_link(self, forecast):
+        link = self.domain + forecast.find('div', class_='forecast-preview__title').a['href']
+        return link
 
     def is_last_page(self, soup):
         if not soup.find_all('div', class_='forecast-item'):
             return True
 
     def create_scrape_url(self, page_num):
-        pattern = '{}/forecasts/?page={}&per_page=200'
+        pattern = '{}/forecasts/?page={}&per_page=25'
         return pattern.format(self.domain, page_num)
 
     def get_prettify_page(self, response):
@@ -106,7 +121,6 @@ class OddsForecasts(BaseExchanger, ABC):
                                                                                                         '').strip())
                 event_outcomes.append(
                     {'event_outcome': event_outcome, 'coefficient': coefficient, 'event_name': event_name})
-
         return event_outcomes
 
     @staticmethod
@@ -121,7 +135,7 @@ class OddsForecasts(BaseExchanger, ABC):
         return teams
 
     @staticmethod
-    def get_forecast(soup):
+    def get_forecast(soup, _id):
         all_shity_divs = soup.find('div', class_='forecast-text post-main-content').find_all('div', recursive=False)
         for div in all_shity_divs:
             div.decompose()
@@ -135,10 +149,13 @@ class OddsForecasts(BaseExchanger, ABC):
 
     def get_forecast_add_info(self, link):
         additional_info = dict()
-        response = self.downloader.get(link, top_proxies=10)
+        headers = random.choice(HEADERS)
+        response = self.downloader.get(link, timeout=15, headers=headers)
+        if response.status_code >= 400:
+            raise Exception
         soup = BeautifulSoup(response.text, 'lxml')
         additional_info['logos'] = self.get_forecast_logos(soup)
-        additional_info['forecast'] = self.get_forecast(soup)
+        additional_info['forecast'] = self.get_forecast(soup, link)
         additional_info['teams'] = self.get_teams(soup)
         event_outcomes = self.get_events_outcomes(soup)
         coefficient = self.get_forecast_coefficient(soup, event_outcomes)
@@ -147,25 +164,31 @@ class OddsForecasts(BaseExchanger, ABC):
 
     def parse_single_forecast(self, forecast):
         _id = self.get_forecast_id(forecast)
+        link = self.get_forecast_link(forecast)
         title = self.get_forecast_title(forecast)
-        additional_info, event_outcomes, coefficient, category = self.get_forecast_add_info(_id)
+        try:
+            additional_info, event_outcomes, coefficient, category = self.get_forecast_add_info(link)
+        except Exception as e:
+            print('exsection {}'.format(str(e)))
+            return
         forecast_date = self.get_forecast_date(forecast)
         forecast_object = Forecast(_id=_id,
+                                   link=link,
                                    title=title,
                                    coefficient=coefficient,
                                    resource=self.__resource_name__,
                                    forecast_date=forecast_date,
                                    events_outcomes=event_outcomes,
-                                   event_type='Solo',
+                                   forecast_type='Solo',
                                    category=category,
                                    **additional_info)
         return forecast_object
 
     def run(self):
-        request_data = {'headers': {'X-Requested-With': 'XMLHttpRequest'}}
+        request_data = {'headers': {'X-Requested-With': 'XMLHttpRequest'}, 'timeout': 15}
         all_forecasts = self.scrape_forecasts(request_data=request_data)
-        parsed_forecasts = self.parse_forecasts(all_forecasts)
-        self.mdb.add_new_forecasts(parsed_forecasts)
+        self.parse_forecasts(all_forecasts)
+
 
 if __name__ == '__main__':
     OddsForecasts().run()

@@ -1,4 +1,3 @@
-from helpers.downloader_helper import Downloader
 from abc import ABC
 from bs4 import BeautifulSoup
 from forecasts_oop.base_forecasts import BaseExchanger
@@ -16,12 +15,16 @@ class VprognozeRu(BaseExchanger, ABC):
         self.domain = 'https://vprognoze.ru'
         super().__init__()
 
+    def is_need_to_reparse(self, soup):
+        if not soup.find('div', id='dle-content'):
+            return True
+
     def is_last_page(self, soup):
         if not soup.find('div', id='dle-content').find_all('div', class_='news_boxing', recursive=False):
             return True
 
     def create_scrape_url(self, page_num):
-        pattern = '{}/page/{}'
+        pattern = '{}/forecast/pro/page/{}'
         return pattern.format(self.domain, page_num)
 
     def get_prettify_page(self, response):
@@ -31,22 +34,23 @@ class VprognozeRu(BaseExchanger, ABC):
         forecasts = page.find('div', id='dle-content').find_all('div', class_='news_boxing')
         return forecasts
 
-    def get_forecast_id(self, forecast):
-        return forecast.find('div', class_='title_news').a['href']
+    def get_forecast_link(self, forecast):
+        link = forecast.find('div', class_='title_news').a['href']
+        return link
 
     def get_forecast_title(self, forecast):
         return forecast.find('div', class_='title_news').a['title']
 
-    def get_forecast_coefficient(self, forecast, event_type):
-        if event_type == 'Express':
+    def get_forecast_coefficient(self, forecast, forecast_type):
+        if forecast_type == 'Express':
             index = 0
         else:
             index = 1
         forecast_coefficient = float(forecast.find_all('span', class_='predict_info_value')[index].text.strip())
         return forecast_coefficient
 
-    def get_events_outcomes(self, soup, event_type):
-        if event_type == 'Express':
+    def get_events_outcomes(self, soup, forecast_type):
+        if forecast_type == 'Express':
             events_outcomes = []
             raw_events_outcomes = soup.find('table', class_='expresstable').find_all('tr')[1::2]
             for raw_event_outcome in raw_events_outcomes:
@@ -58,9 +62,12 @@ class VprognozeRu(BaseExchanger, ABC):
                                         'event_name': event_name.text})
 
         else:
-            events_outcomes = [{'event_outcome': soup.find('span', class_='predict_info_value').text.strip(),
-                                'coefficient': self.get_forecast_coefficient(soup, 'Solo'),
-                                'event_name': soup.h1.text}]
+            try:
+                events_outcomes = [{'event_outcome': soup.find('span', class_='predict_info_value').text.strip(),
+                                    'coefficient': self.get_forecast_coefficient(soup, 'Solo'),
+                                    'event_name': soup.h1.text}]
+            except:
+                events_outcomes = 'bug'
 
         return events_outcomes
 
@@ -115,14 +122,14 @@ class VprognozeRu(BaseExchanger, ABC):
         events = list(map(self.parse_express_event, events_outcomes))
         return events
 
-    def get_forecast_add_info(self, link, event_type):
-        response = self.downloader.get(link, top_proxies=10)
+    def get_forecast_add_info(self, link, forecast_type):
+        response = self.downloader.get(link, timeout=15)
         soup = BeautifulSoup(response.text, 'lxml')
-        if event_type == 'Express':
+        if forecast_type == 'Express':
             additional_info, events_outcomes = self.create_express_data(soup)
         else:
             additional_info, events_outcomes = self.create_solo_data(soup)
-        coefficient = self.get_forecast_coefficient(soup, event_type)
+        coefficient = self.get_forecast_coefficient(soup, forecast_type)
         return additional_info, events_outcomes, coefficient
 
     @staticmethod
@@ -136,12 +143,12 @@ class VprognozeRu(BaseExchanger, ABC):
         return tourname
 
     @staticmethod
-    def get_event_type(tourname):
+    def get_forecast_type(tourname):
         if tourname == 'Экспресс':
-            event_type = 'Express'
+            forecast_type = 'Express'
         else:
-            event_type = 'Solo'
-        return event_type
+            forecast_type = 'Solo'
+        return forecast_type
 
     def get_category(self, link, forecast):
         splited_link = link.split('/')
@@ -158,36 +165,43 @@ class VprognozeRu(BaseExchanger, ABC):
 
     def parse_single_forecast(self, forecast):
         _id = self.get_forecast_id(forecast)
+        link = self.get_forecast_link(forecast)
         title = self.get_forecast_title(forecast)
         forecast_date = self.get_forecast_date(forecast)
         tourname = self.get_tourname(forecast)
-        event_type = self.get_event_type(tourname)
-        additional_info, events_outcomes, coefficient = self.get_forecast_add_info(_id, event_type)
+        forecast_type = self.get_forecast_type(tourname)
+        additional_info, events_outcomes, coefficient = self.get_forecast_add_info(link, forecast_type)
         forecast_text = self.get_forecast_text(forecast)
-        category = self.get_category(_id, forecast)
+        category = self.get_category(link, forecast)
         forecast_object = Forecast(_id=_id,
+                                   link=link,
                                    title=title,
                                    coefficient=coefficient,
                                    resource=self.__resource_name__,
                                    forecast_date=forecast_date,
                                    events_outcomes=events_outcomes,
-                                   event_type=event_type,
+                                   forecast_type=forecast_type,
                                    forecast=forecast_text,
                                    category=category,
                                    **additional_info)
         return forecast_object
 
+    def solve_robot(self):
+        response = self.downloader.get(self.domain)
+        response.html.render()
+        return
+
     def login(self):
         self.downloader.use_session = True
         self.downloader.update_request_maker()
-        response = self.downloader.get(self.domain, top_proxies=10)
+        response = self.downloader.get(self.domain, timeout=15)
         login_user_token = response.cookies.get_dict()['login_user_token']
         login_data = {'login_name': self.config['login'],
                       'login_password': self.config['password'],
                       'login': 'submit',
                       'login_user_token': login_user_token}
         headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-        login_response = self.downloader.post(self.domain, headers=headers, data=login_data, top_proxies=10)
+        login_response = self.downloader.post(self.domain, headers=headers, data=login_data)
         soup = BeautifulSoup(login_response.text, 'lxml')
         if not soup.find('div', class_='nameuser'):
             logging.info('Login doesn\'t work')
@@ -197,9 +211,9 @@ class VprognozeRu(BaseExchanger, ABC):
 
     def run(self):
         self.login()
-        all_forecasts = self.scrape_forecasts()
-        parsed_forecasts = self.parse_forecasts(all_forecasts)
-        self.mdb.add_new_forecasts(parsed_forecasts)
+        all_forecasts = self.scrape_forecasts({'timeout': 15})
+        self.parse_forecasts(all_forecasts)
+
 
 if __name__ == '__main__':
     VprognozeRu().run()

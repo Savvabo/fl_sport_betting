@@ -1,4 +1,3 @@
-from storage.mongodb_storage import MongoDBStorage
 from abc import ABC
 from bs4 import BeautifulSoup
 from forecasts_oop.base_forecasts import BaseExchanger
@@ -15,6 +14,9 @@ class StavkaTV(BaseExchanger, ABC):
         self.__resource_name__ = 'stavka.tv'
         self.domain = 'https://stavka.tv'
         super().__init__()
+
+    def is_need_to_reparse(self, soup):
+        return False
 
     def is_last_page(self, soup):
         if soup.find('div', class_='Predictions__empty'):
@@ -34,8 +36,9 @@ class StavkaTV(BaseExchanger, ABC):
             logging.warning('received {} forecasts, but expected {}'.format(len(forecasts), expected_count))
         return forecasts
 
-    def get_forecast_id(self, forecast):
-        return self.domain + forecast.a['href']
+    def get_forecast_link(self, forecast):
+        link = self.domain + forecast.a['href']
+        return link
 
     def get_forecast_title(self, forecast):
         return forecast.find('div', class_='Prediction__header-name').text.strip()
@@ -89,7 +92,7 @@ class StavkaTV(BaseExchanger, ABC):
 
     def get_forecast_add_info(self, link):
         additional_info = dict()
-        response = self.downloader.get(link, top_proxies=10)
+        response = self.downloader.get(link, timeout=15)
         soup = BeautifulSoup(response.text, 'lxml')
         additional_info['logos'] = self.get_forecast_logos(soup)
         return additional_info
@@ -105,29 +108,31 @@ class StavkaTV(BaseExchanger, ABC):
 
     def parse_single_forecast(self, forecast):
         _id = self.get_forecast_id(forecast)
+        link = self.get_forecast_link(forecast)
         title = self.get_forecast_title(forecast)
         coefficient = float(self.get_forecast_coefficient(forecast))
         event_outcomes = self.get_events_outcomes(forecast)
         forecast_date = self.get_forecast_date(forecast)
-        additional_info = self.get_forecast_add_info(_id)
+        additional_info = self.get_forecast_add_info(link)
         additional_info['forecast'] = self.get_forecast_text(forecast)
         additional_info['teams'] = self.get_teams(forecast)
         category = self.get_category(forecast)
         forecast_object = Forecast(_id=_id,
+                                   link=link,
                                    title=title,
                                    coefficient=coefficient,
                                    resource=self.__resource_name__,
                                    forecast_date=forecast_date,
                                    events_outcomes=event_outcomes,
-                                   event_type='Solo',
+                                   forecast_type='Solo',
                                    category=category,
                                    **additional_info)
         return forecast_object
 
     def run(self):
-        all_forecasts = self.scrape_forecasts()
-        parsed_forecasts = self.parse_forecasts(all_forecasts)
-        self.mdb.add_new_forecasts(parsed_forecasts)
+        all_forecasts = self.scrape_forecasts({'timeout': 15})
+        self.parse_forecasts(all_forecasts)
+
 
 if __name__ == '__main__':
     StavkaTV().run()

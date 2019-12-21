@@ -37,16 +37,17 @@ class MongoDBStorage:
 
 
 class Forecast(MongoDBStorage, dict):
-    def __init__(self, *, _id, title, coefficient, resource, forecast_date, events_outcomes, event_type, category, **kwargs):
+    def __init__(self, *, _id, link, title, coefficient, resource, forecast_date, events_outcomes, forecast_type, category, **kwargs):
         super().__init__()
         self.data = {'additional_info': {}}
         self['_id'] = _id
+        self['link'] = link
         self['title'] = title
         self['coefficient'] = coefficient
         self['resource'] = resource
         self['date'] = forecast_date
         self['events_outcomes'] = events_outcomes
-        self['event_type'] = event_type
+        self['forecast_type'] = forecast_type
         self['category'] = category
         self.data['additional_info'].update(kwargs)
 

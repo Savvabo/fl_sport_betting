@@ -4,20 +4,15 @@ import os
 import csv
 import logging
 import random
-logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
-                    level=logging.DEBUG)
-logging.getLogger("requests").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("connectionpool").setLevel(logging.WARNING)
 
 
 class Downloader:
-    def __init__(self, use_proxy=True, attempts=20, use_user_agents=True, use_session=False):
+    def __init__(self, check_url, use_proxy=True, attempts=20, use_user_agents=True, use_session=False):
+        self.check_url = check_url
         self.use_proxy = use_proxy
         self.use_session = use_session
         self.update_request_maker()
-        if use_proxy:
-            self.proxy_helper = ProxyHelper()
+        self.proxy_helper = ProxyHelper(check_url, use_proxy)
         self.attempts = attempts
         self.use_user_agents = use_user_agents
         self.user_agents_list = self.load_user_agents()
@@ -28,7 +23,7 @@ class Downloader:
         else:
             self.request_maker = requests
 
-    def create_request(self, method, url, cookies=None, data={}, headers={}, timeout=60, files=None, top_proxies=100):
+    def create_request(self, method, url, cookies=None, data={}, headers={}, timeout=60, files=None):
         @self.proxy_helper.exception_decorator
         def request_to_page(proxy, **kwargs):
             proxies = {'https': proxy, 'http': proxy}
@@ -38,13 +33,17 @@ class Downloader:
                 raise
             return response
 
-        if self.use_user_agents:
-            headers.update({'user-agent': self.get_random_user_agent()})
         attempts = self.attempts
         while attempts > 0:
+            if self.use_user_agents:
+                headers.update({'user-agent': self.get_random_user_agent()})
             attempts -= 1
             # try without proxies last time
-            raw_proxy = self.proxy_helper.get_proxy(top_proxies) if self.use_proxy and attempts != 1 else None
+            raw_proxy = self.proxy_helper.get_proxy() if self.use_proxy and attempts != 1 else None
+            if attempts == 1:
+                raw_proxy = None
+            elif attempts == 2:
+                raw_proxy = '167.172.60.144:3128'
             try:
                 request_response = request_to_page(proxy=raw_proxy,
                                                    method=method,
@@ -58,24 +57,22 @@ class Downloader:
             except Exception as e:
                 logging.debug('received exception on request on {} try'.format(self.attempts - attempts))
 
-    def get(self, url, cookies=None, data={},  headers={}, timeout=60, top_proxies=100):
+    def get(self, url, cookies=None, data={},  headers={}, timeout=60):
         return self.create_request(method='GET',
                                    url=url,
                                    cookies=cookies,
                                    data=data,
                                    headers=headers,
-                                   timeout=timeout,
-                                   top_proxies=top_proxies)
+                                   timeout=timeout)
 
-    def post(self, url, cookies=None, data={}, headers={}, timeout=60, files=None, top_proxies=100):
+    def post(self, url, cookies=None, data={}, headers={}, timeout=60, files=None):
         return self.create_request(method='POST',
                                    url=url,
                                    cookies=cookies,
                                    data=data,
                                    headers=headers,
                                    timeout=timeout,
-                                   files=files,
-                                   top_proxies=top_proxies)
+                                   files=files)
 
     @staticmethod
     def load_user_agents():

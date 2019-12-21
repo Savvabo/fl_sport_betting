@@ -7,11 +7,6 @@ from storage.mongodb_storage import Forecast
 import pytz
 from forecasts_oop.base_forecasts import BaseExchanger
 from helpers.category_translation import category_translation
-logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
-                    level=logging.DEBUG)
-logging.getLogger("requests").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("connectionpool").setLevel(logging.WARNING)
 
 
 class VseprosportForecasts(BaseExchanger, ABC):
@@ -21,8 +16,11 @@ class VseprosportForecasts(BaseExchanger, ABC):
         self.domain = 'https://www.vseprosport.ru'
         super().__init__()
 
+    def is_need_to_reparse(self, soup):
+        return False
+
     def is_last_page(self, soup):
-        if soup.find('div', class_='list-view').find('div',class_='empty'):
+        if soup.find('div', class_='list-view').find('div', class_='empty'):
             return True
 
     def get_prettify_page(self, response):
@@ -35,7 +33,7 @@ class VseprosportForecasts(BaseExchanger, ABC):
             logging.warning('received {} forecasts, but expected {}'.format(len(forecasts), expected_count))
         return forecasts
 
-    def get_forecast_id(self, forecast):
+    def get_forecast_link(self, forecast):
         return forecast['href']
 
     def create_scrape_url(self, page_num):
@@ -74,18 +72,19 @@ class VseprosportForecasts(BaseExchanger, ABC):
     def get_superexpress_maintext(soup):
         return soup.find('section', class_='news_content').text
 
-    def get_events_outcomes(self, soup, event_type, teams=()):
+    def get_events_outcomes(self, soup, forecast_type, teams=(),id_=None):
         events_outcomes = []
 
-        if event_type == 'Superexpress':
+        if forecast_type == 'Superexpress':
             for raw_event_outcome in soup.find_all('div', {'style': 'text-align: justify;'}, text=re.compile('[0-9] .*:')):
                 event_outcome = raw_event_outcome.text.split(':')[1].strip()
                 coefficient = None
                 event_name = re.sub('[0-9]', '', raw_event_outcome.text.split(':')[0]).strip()
                 events_outcomes.append({'event_outcome': event_outcome,
                                         'coefficient': coefficient,
-                                        'event_name': event_name})
-        elif event_type == 'Express':
+                                        'event_name': event_name,
+                                        'tournament': raw_event_outcome.find_previous('strong').text.strip()})
+        elif forecast_type == 'Express':
             for raw_event_outcome in soup.find_all('div', class_='bookmaker_express_time_total'):
                 splited_outcome = raw_event_outcome.text.strip().split(', ')
                 event_outcome = splited_outcome[2]
@@ -111,8 +110,7 @@ class VseprosportForecasts(BaseExchanger, ABC):
                     event_name = ' - '.join(teams)
                     events_outcomes.append({'event_outcome': event_outcome,
                                         'coefficient': coefficient,
-                                        'event_name': event_name,
-                                        'test':True})
+                                        'event_name': event_name})
                 except:
 
                     events_outcomes.append({'event_outcome': None,
@@ -158,7 +156,7 @@ class VseprosportForecasts(BaseExchanger, ABC):
     def get_express_event_teams(event):
         teams_name_block = event.find_all('div', class_='bookmaker_express_item_title_teamsName')
         teams = [team_name.strip() for team_name_block in teams_name_block for team_name in
-                 team_name_block.p.text.split('-')]
+                 team_name_block.p.text.split(' - ')]
         return teams
 
     def get_superexpress_teams(self, soup):
@@ -176,10 +174,15 @@ class VseprosportForecasts(BaseExchanger, ABC):
         teams = [team_name_block.h4.text for team_name_block in teams_name_block]
         return teams
 
-    def create_solo_data(self, soup):
+    def create_solo_data(self, soup,_id):
         solo_data = dict()
         solo_data['teams'] = self.get_solo_teams(soup)
-        events_outcomes = self.get_events_outcomes(soup, 'solo', solo_data['teams'])
+        with self.downloader.proxy_helper.lock:
+            try:
+                solo_data['logos'] = [a.img['src'].split('base64,')[1] for a in soup.find_all('a', class_='team_img')]
+            except:
+                solo_data['logos'] = [a.img['src'] for a in soup.find_all('a', class_='team_img')]
+        events_outcomes = self.get_events_outcomes(soup, 'solo', solo_data['teams'],_id)
         try:
             about_team_blocks = soup.find_all('div', class_='about_team')[:-1]
             solo_data['about_teams'] = list(map(self.parse_team_description, about_team_blocks))
@@ -194,17 +197,17 @@ class VseprosportForecasts(BaseExchanger, ABC):
             solo_data['news_text'] = soup.find('section', class_='news_content').text
         return solo_data, events_outcomes
 
-    def get_forecast_add_info(self, link, forecast_date, event_type):
-        response = self.downloader.get(link, top_proxies=10, timeout=30)
+    def get_forecast_add_info(self, link, forecast_date, forecast_type):
+        response = self.downloader.get(link, timeout=15)
         if response.status_code >= 400:
             return
         soup = BeautifulSoup(response.text, 'lxml')
-        if event_type == 'Express':
+        if forecast_type == 'Express':
             additional_info, events_outcomes = self.create_express_data(soup, forecast_date)
-        elif event_type == 'Superexpress':
+        elif forecast_type == 'Superexpress':
             additional_info, events_outcomes = self.create_superexpress_data(soup)
         else:
-            additional_info, events_outcomes = self.create_solo_data(soup)
+            additional_info, events_outcomes = self.create_solo_data(soup,link)
         return additional_info, events_outcomes
 
     @staticmethod
@@ -234,8 +237,11 @@ class VseprosportForecasts(BaseExchanger, ABC):
         return tournament
 
     def get_category(self, forecast):
-        category_raw = forecast.find('img', class_='img-responsive')['title']
-        category = category_translation[category_raw]
+        try:
+            category_raw = forecast.find('img', class_='img-responsive')['title']
+            category = category_translation[category_raw]
+        except KeyError:
+            category = None
         return category
 
     def get_forecast_date(self, forecast):
@@ -251,37 +257,37 @@ class VseprosportForecasts(BaseExchanger, ABC):
         else:
             event_time = datetime.datetime.strptime(date_string, 'Время: %d/%m/%y в %H:%M МСК')
         pytz.timezone("Europe/Moscow").localize(event_time)
-        event_timestamp = event_time.timestamp()
+        event_timestamp = int(event_time.timestamp())
         return event_timestamp
 
     def parse_single_forecast(self, forecast):
         _id = self.get_forecast_id(forecast)
-        self._id = _id
+        link = self.get_forecast_link(forecast)
         title = self.get_forecast_title(forecast)
-        event_type = self.get_forecast_type(title)
+        forecast_type = self.get_forecast_type(title)
         coefficient = self.get_forecast_coefficient(forecast)
         tournament = self.get_forecast_tournament(forecast)
         forecast_date = self.get_forecast_date(forecast)
-        additional_info, events_outcomes = self.get_forecast_add_info(_id, forecast_date, event_type)
+        additional_info, events_outcomes = self.get_forecast_add_info(link, forecast_date, forecast_type)
         category = self.get_category(forecast)
         forecast_object = Forecast(_id=_id,
+                                   link=link,
                                    title=title,
                                    coefficient=coefficient,
                                    resource=self.__resource_name__,
                                    forecast_date=forecast_date,
                                    events_outcomes=events_outcomes,
                                    tournament=tournament,
-                                   event_type=event_type,
+                                   forecast_type=forecast_type,
                                    category=category,
                                    **additional_info)
 
         return forecast_object
 
     def run(self):
-        all_forecasts = self.scrape_forecasts()
-        parsed_forecasts = self.parse_forecasts(all_forecasts)
+        all_forecasts = self.scrape_forecasts({'timeout': 15})
+        self.parse_forecasts(all_forecasts)
 
-        self.mdb.add_new_forecasts(parsed_forecasts)
 
 
 if __name__ == '__main__':

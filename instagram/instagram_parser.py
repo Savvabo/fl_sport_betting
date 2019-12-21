@@ -4,8 +4,7 @@ from storage.mongodb_storage import MongoDBStorage
 from multiprocessing.pool import ThreadPool
 import logging
 from helpers.proxy_helper import ProxyHelper
-import random
-import requests
+
 import time
 from helpers.helpers import parse_config, chunkify
 logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
@@ -22,134 +21,59 @@ class InstagramParser:
         self.anon_agent = WebAgent()
         self.logged_agent = WebAgentAccount(self.config['LOGIN'])
         self.logged_agent.auth(self.config['PASSWORD'])
-        self.agent = self.anon_agent
+        self.agent = {'agent': self.anon_agent, 'set_time': time.time()}
         self.mdb = MongoDBStorage()
-        self.proxy_list = self.get_proxies()
+        self.proxy_helper = ProxyHelper('https://www.instagram.com')
         self.use_proxy = False
 
-    def check_proxy(self, proxy):
-        try:
-            t1 = time.time()
-            requests.get('https://www.instagram.com', proxies={
-                "http": proxy,
-                "https": proxy,
-            }, timeout=5)
-            request_time = time.time() - t1
-            return {'address': proxy, 'is_valid': True, 'request_time': request_time}
-
-        except:
-            return {'address': proxy, 'is_valid': False}
-
-    def to_sort_def(self, item):
-        if len(item[1]['insta_request_times']) >= 10:
-            return sum(item[1]['insta_request_times']) / len(item[1]['insta_request_times'])
-        else:
-            return item[1]['check_request_time']
-
-    def sort_proxies(self, proxies_list=None):
-        chosen_proxies_list = proxies_list if proxies_list else self.proxy_list
-        counter = 0
-        while True:
-            try:
-                sorted_proxies = {k: v for k, v in sorted(chosen_proxies_list.items(), key=self.to_sort_def)}
-                break
-            except:
-                counter += 1
-                logging.info(f'sort error {counter} times')
-        return sorted_proxies
-
-    def get_proxies(self):
-        raw_proxies = ProxyHelper('instagram').load_proxies_list()[:500]
-        chunks = list(chunkify(raw_proxies, 500))
-        valid_proxies = {}
-        for n, chunk in enumerate(chunks):
-            logging.info('checking {}/{} proxy batch'.format(n+1, len(chunks)))
-            proxy_pool = ThreadPool(100)
-            checked_proxies = list(proxy_pool.map(self.check_proxy, chunk))
-            proxy_pool.close()
-            valid_batch_proxies = {proxy['address']: {'check_request_time': proxy['request_time'],
-                                                      'error_count': 0,
-                                                      'insta_request_times': [],
-                                                      'on_work': False,
-                                                      'previous_error_time': 0} for proxy in checked_proxies if proxy['is_valid']}
-            valid_proxies.update(valid_batch_proxies)
-
-        valid_proxies = self.sort_proxies(valid_proxies)
-        logging.info('found {} valid proxies'.format(len(valid_proxies)))
-        return valid_proxies
-
-    def mark_proxy_as_failed(self, proxy):
-        logging.debug('marking proxy as failed')
-        try:
-            self.proxy_list[proxy]['error_count'] += 1
-            self.proxy_list[proxy]['previous_error_time'] = time.time()
-            self.proxy_list[proxy]['on_work'] = False
-        except KeyError:
-            pass
-        if self.proxy_list.get(proxy, {}).get('error_count') == 5:
-            try:
-                logging.debug('removing proxy')
-                logging.info(self.proxy_list.get(proxy))
-                self.proxy_list.pop(proxy)
-            except KeyError:
-                pass
-        if len(self.proxy_list) == 0:
-            logging.info('proxy list is empty, getting new proxies')
-            self.proxy_list = self.get_proxies()
-
-    def get_settings(self, proxies_top_perc=100, proxy_only=False):
+    def get_settings(self,request_start_time,  proxy_only=False):
         if proxy_only or self.use_proxy and time.time() - self.previous_local_request < 11 * 60:
-            while True:
-                self.sort_proxies()
-                list_stop_index = int(len(self.proxy_list)//(100/proxies_top_perc))
-                list_stop_index = 50 if proxy_only and list_stop_index < 50 else list_stop_index
-                chosen_proxy = random.choice(list(self.proxy_list.keys())[:list_stop_index])
-                if not self.proxy_list[chosen_proxy]['on_work'] and time.time() - self.proxy_list[chosen_proxy]['previous_error_time'] > 10:
-                    self.proxy_list[chosen_proxy]['on_work'] = True
-                    break
+            chosen_proxy = self.proxy_helper.get_proxy()
         else:
             chosen_proxy = None
-            if self.use_proxy:
-                self.anon_agent = WebAgent()
-                self.agent = self.anon_agent
-                self.use_proxy = False
-                logging.info('stop to use proxies')
+            if self.use_proxy and self.agent['set_time'] < request_start_time:
+                with self.proxy_helper.lock:
+                    self.agent = {'agent': self.anon_agent, 'set_time': time.time()}
+                    self.use_proxy = False
+                    logging.info('stop to use proxies')
         settings = {
             "proxies": {
                 "http": chosen_proxy,
                 "https": chosen_proxy,
-            }, 'timeout': 60}
+            }, 'timeout': 30}
         return chosen_proxy, settings
 
+    def swap_agent(self):
+        if self.agent == self.anon_agent:
+            self.agent = {'agent': self.logged_agent, 'set_time': time.time()}
+        else:
+            self.agent = {'agent': self.anon_agent, 'set_time': time.time()}
+
     def insta_request(self, pointer=None, data=None, proxy_only=False):
-        chosen_proxy, settings = self.get_settings(proxies_top_perc=8, proxy_only=proxy_only)
-        posts = None
+        @self.proxy_helper.exception_decorator
+        def request_to_instagram(proxy, setting, pointer=None,posts=None):
+            if data:
+                self.agent['agent'].update(data, settings=setting)
+            else:
+                posts, pointer = self.agent['agent'].get_media(self.resource, pointer=pointer, settings=setting, delay=1)
+            return posts, pointer
+        request_start_time = time.time()
         while True:
-            agent = WebAgent() if proxy_only else self.agent
+            chosen_proxy, settings = self.get_settings(proxy_only=proxy_only, request_start_time=request_start_time)
+            request_start_time = time.time()
             try:
-                if data:
-                    agent.update(data, settings=settings)
-                    break
-                else:
-                    t1 = time.time()
-                    posts, pointer = agent.get_media(self.resource, pointer=pointer, settings=settings, delay=1)
-                    request_time = time.time() - t1
-                    if chosen_proxy:
-                        self.proxy_list[chosen_proxy]['insta_request_times'].append(request_time)
-                    break
+                posts, pointer = request_to_instagram(proxy=chosen_proxy,setting=settings, pointer=pointer)
+                break
             except (InternetException, UnexpectedResponse) as e:
-                if chosen_proxy:
-                    logging.info(e)
-                    logging.info(chosen_proxy)
-                    self.mark_proxy_as_failed(chosen_proxy)
-                else:
-                    self.use_proxy = True
-                    self.previous_local_request = time.time()
-                    logging.info('start to use proxies')
-                    self.agent = self.logged_agent
-                chosen_proxy, settings = self.get_settings(proxies_top_perc=8, proxy_only=proxy_only)
-        if chosen_proxy:
-            self.proxy_list[chosen_proxy]['on_work'] = False
+                with self.proxy_helper.lock:
+                    if self.agent['set_time'] < request_start_time:
+                        if isinstance(e, UnexpectedResponse):
+                            self.swap_agent()
+                        if not chosen_proxy:
+                            self.use_proxy = True
+                            self.previous_local_request = time.time()
+                            logging.info('start to use proxies')
+                            self.agent = {'agent': self.logged_agent, 'set_time': time.time()}
         if posts:
             return posts, pointer
 
@@ -158,7 +82,7 @@ class InstagramParser:
         new_posts = []
         pointer = None
         self.insta_request(data=self.resource)
-        posts_count = 100# self.resource.media_count
+        posts_count = self.resource.media_count
         posts_scraped = 0
         while posts_count > posts_scraped:
             try:
@@ -181,7 +105,7 @@ class InstagramParser:
         album_data = dict()
         album_pages = []
         for album_page in album.album:
-            self.insta_request(data=album_page, proxy_only=True)
+            self.insta_request(data=album_page, proxy_only=False)
             album_pages.append(album_page.resources[-1])
         album_data['album_pages'] = album_pages
         return album_data
@@ -210,8 +134,7 @@ class InstagramParser:
         return post_data
 
     def parse_post(self, post):
-        logging.debug(post.__str__())
-        self.insta_request(data=post, proxy_only=True)
+        self.insta_request(data=post, proxy_only=False)
         post_data = self.get_mandatory_post_data(post)
         if post.is_album:
             post_data.update(self.parse_album(post))
@@ -222,14 +145,14 @@ class InstagramParser:
         return post_data
 
     def process_posts(self, posts):
-        # chunks = list(self.chunkify(posts, 500))
-        # for n, chunk in enumerate(chunks):
-        # logging.info('processing {}/{} posts batch'.format(n + 1, len(chunks)))
-        posts = posts[::-1]
-        pool = ThreadPool(50)
-        parsed_posts = list(pool.map(self.parse_post, posts))
-        pool.close()
-        self.mdb.add_new_posts(parsed_posts)
+        chunks = list(chunkify(posts, 500))
+        for n, chunk in enumerate(chunks):
+            logging.info('processing {}/{} posts batch'.format(n + 1, len(chunks)))
+            chunk = chunk[::-1]
+            pool = ThreadPool(70)
+            parsed_posts = list(pool.map(self.parse_post, chunk))
+            pool.close()
+            self.mdb.add_new_posts(parsed_posts)
 
     def run(self):
         for resource in self.resources:
@@ -240,5 +163,4 @@ class InstagramParser:
             logging.info(f'{resource} resource is parsed')
 
 
-InstagramParser(['sportsru']).run()
-
+InstagramParser(['fcsm_official']).run()

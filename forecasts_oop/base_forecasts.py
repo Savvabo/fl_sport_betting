@@ -7,8 +7,11 @@ from functools import reduce
 from helpers.downloader_helper import Downloader
 import ast
 from helpers.helpers import chunkify
+import hashlib
+import time
+import datetime
 logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
-                    level=logging.DEBUG)
+                    level=logging.INFO)
 logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("connectionpool").setLevel(logging.WARNING)
@@ -19,7 +22,11 @@ class BaseExchanger(ABC):
         self.mdb = MongoDBStorage()
         self.parsed_forecasts = self.get_parsed_forecasts()
         self.config = parse_config('forecasts')
-        self.downloader = Downloader()
+        try:
+            check_url = 'https://' + self.__resource_name__
+        except:
+            check_url = 'https://www.google.com'
+        self.downloader = Downloader(check_url, attempts=50, use_proxy=True)
 
     def get_parsed_forecasts(self):
         try:
@@ -37,21 +44,35 @@ class BaseExchanger(ABC):
         # creating links to selected page
         urls_to_scrape = list(map(self.create_scrape_url, page_numbers))
         # request to pages
-        response_pages = list(pool.map(lambda url: self.downloader.get(url, top_proxies=10, **request_data), urls_to_scrape))
+        response_pages = list(pool.map(lambda url: self.downloader.get(url, **request_data), urls_to_scrape))
         # making prettify_data from response
         pretty_pages = list(map(self.get_prettify_page, response_pages))
         pool.close()
         return pretty_pages
 
+    def forecast_too_old(self, date, scraping_date_limit):
+        if scraping_date_limit and date:
+            date_limit = datetime.datetime.now() - datetime.timedelta(days=scraping_date_limit)
+            date_limit_timestamp = date_limit.timestamp()
+            if date < date_limit_timestamp:
+                return True
+
     def scrape_forecasts(self, request_data={}):
         start_page = 1
         all_forecasts = []
-        scraping_limit = ast.literal_eval(self.config['scraping_limit'])
+        scraping_page_limit = ast.literal_eval(self.config['scraping_page_limit'])
+        scraping_date_limit = ast.literal_eval(self.config['scraping_date_limit'])
         while True:
             # creating list of pages we should to scrape
             end_page = start_page + int(self.config['scraping_pool_size'])
             page_numbers = list(range(start_page, end_page))
             prettify_pages = self.get_prettify_pages(page_numbers, request_data)
+            is_need_to_reparse = list(filter(self.is_need_to_reparse, prettify_pages))
+            if is_need_to_reparse:
+                logging.info('received reparse bug')
+                time.sleep(90)
+                self.login()
+                continue
             is_last_page = list(filter(self.is_last_page, prettify_pages))
             # get all forecasts on each page
             batch_forecasts = list(map(self.get_forecasts_on_page, prettify_pages))
@@ -61,6 +82,9 @@ class BaseExchanger(ABC):
             forecasts_id = list(map(self.get_forecast_id, flat_forecasts))
             # check them in db already, means we should stop parse because we already parse that page
             in_db_check = list(filter(self.is_forecast_in_db, forecasts_id))
+            # check if date_limit
+            over_dates = list(filter(lambda date: self.forecast_too_old(date, scraping_date_limit),
+                                list(map(self.get_forecast_date, flat_forecasts))))
             all_forecasts.extend(flat_forecasts)
             logging.info('scraped {} pages'.format(page_numbers[-1]))
             start_page += len(page_numbers)
@@ -70,22 +94,25 @@ class BaseExchanger(ABC):
             if in_db_check:
                 logging.info('Next pages already parsed')
                 break
-            elif scraping_limit and end_page >= int(self.config['scraping_limit']):
-                logging.info('scraping limit is reached')
+            elif scraping_page_limit and end_page >= int(scraping_page_limit):
+                logging.info('scraping page limit is reached')
+                break
+            elif over_dates:
+                logging.info('scraping date limit is reached')
                 break
         logging.info('all pages scraped, scraping finished, found {} forecasts'.format(len(all_forecasts)))
         return all_forecasts
 
     def parse_forecasts(self, forecasts):
         pool = ThreadPool(int(self.config['parsing_pool_size']))
-        chunks = list(chunkify(forecasts, len(forecasts) // 10))
-        parsed_forecasts = []
+        chunks = list(chunkify(forecasts, 200))
         for n, chunk in enumerate(chunks):
             logging.info('parsed {}/{} forecasts chunks'.format(n+1, len(chunks)))
-            parsed_chunk = list(pool.map(self.parse_single_forecast, chunk))
-            parsed_forecasts.extend(parsed_chunk)
+            parsed_chunk = [forecast for forecast in list(pool.map(self.parse_single_forecast, chunk)) if forecast is not None]
+            self.mdb.add_new_forecasts(parsed_chunk)
         pool.close()
-        return parsed_forecasts
+        logging.info('parsing finished')
+
 
     @abstractmethod
     def get_prettify_page(self, response):
@@ -130,6 +157,24 @@ class BaseExchanger(ABC):
 
     @abstractmethod
     def get_category(self, *args, **kwargs):
+        pass
+
+    @abstractmethod
+    def get_forecast_link(self, forecast):
+        pass
+
+    def get_forecast_id(self, forecast):
+        link = self.get_forecast_link(forecast)
+        _id = hashlib.md5(link.encode()).hexdigest()
+        return _id
+
+    @abstractmethod
+    def is_need_to_reparse(self, soup):
+        pass
+
+    def login(self):
+        pass
+    def solve_robot(self):
         pass
 
 
