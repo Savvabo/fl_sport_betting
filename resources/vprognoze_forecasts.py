@@ -1,6 +1,6 @@
 from abc import ABC
 from bs4 import BeautifulSoup
-from forecasts_oop.base_forecasts import BaseExchanger
+from resources.base_forecasts import BaseExchanger
 import logging
 from storage.mongodb_storage import Forecast
 import pytz
@@ -9,11 +9,12 @@ import re
 from helpers.category_translation import category_translation
 
 
-class VprognozeRu(BaseExchanger, ABC):
+class VprognozeForecasts(BaseExchanger, ABC):
     def __init__(self):
         self.__resource_name__ = 'vprognoze.ru'
         self.domain = 'https://vprognoze.ru'
         super().__init__()
+        self.login()
 
     def is_need_to_reparse(self, soup):
         if not soup.find('div', id='dle-content'):
@@ -46,7 +47,11 @@ class VprognozeRu(BaseExchanger, ABC):
             index = 0
         else:
             index = 1
-        forecast_coefficient = float(forecast.find_all('span', class_='predict_info_value')[index].text.strip())
+        try:
+            forecast_coefficient = float(forecast.find_all('span', class_='predict_info_value')[index].text.strip())
+        except:
+            with self.downloader.proxy_helper.lock:
+                print('b')
         return forecast_coefficient
 
     def get_events_outcomes(self, soup, forecast_type):
@@ -147,7 +152,7 @@ class VprognozeRu(BaseExchanger, ABC):
         if tourname == 'Экспресс':
             forecast_type = 'Express'
         else:
-            forecast_type = 'Solo'
+            forecast_type = 'Solo2'
         return forecast_type
 
     def get_category(self, link, forecast):
@@ -210,10 +215,9 @@ class VprognozeRu(BaseExchanger, ABC):
             logging.info('Logged successfully')
 
     def run(self):
-        self.login()
-        all_forecasts = self.scrape_forecasts({'timeout': 15})
+        all_forecasts = self.scrape_forecasts()
         self.parse_forecasts(all_forecasts)
 
 
 if __name__ == '__main__':
-    VprognozeRu().run()
+    VprognozeForecasts().run()

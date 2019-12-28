@@ -1,6 +1,6 @@
 from abc import ABC
 from bs4 import BeautifulSoup
-from forecasts_oop.base_forecasts import BaseExchanger
+from resources.base_forecasts import BaseExchanger
 import logging
 from storage.mongodb_storage import Forecast
 import pytz
@@ -9,7 +9,7 @@ import re
 from helpers.category_translation import category_translation
 
 
-class StavkaTV(BaseExchanger, ABC):
+class StavkaForecasts(BaseExchanger, ABC):
     def __init__(self):
         self.__resource_name__ = 'stavka.tv'
         self.domain = 'https://stavka.tv'
@@ -124,7 +124,7 @@ class StavkaTV(BaseExchanger, ABC):
                                    resource=self.__resource_name__,
                                    forecast_date=forecast_date,
                                    events_outcomes=event_outcomes,
-                                   forecast_type='Solo',
+                                   forecast_type='Solo2',
                                    category=category,
                                    **additional_info)
         return forecast_object
@@ -135,4 +135,4 @@ class StavkaTV(BaseExchanger, ABC):
 
 
 if __name__ == '__main__':
-    StavkaTV().run()
+    StavkaForecasts().run()

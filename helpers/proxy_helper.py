@@ -4,7 +4,6 @@ import time
 from helpers.helpers import chunkify
 from multiprocessing.pool import ThreadPool
 from threading import Lock
-import random
 from requests.exceptions import ProxyError, ConnectTimeout
 from instagram.exceptions import InternetException, UnexpectedResponse
 import pandas as pd
@@ -13,7 +12,6 @@ import pandas as pd
 class ProxyHelper:
     def __init__(self, check_url, use_proxy=True):
         self.check_url = check_url
-        #self.project_type = project_type
         if use_proxy:
             self.get_valid_proxies()
         self.lock = Lock()
@@ -49,10 +47,18 @@ class ProxyHelper:
         return wrapper
 
     def get_proxy(self):
-        with self.lock:
-            self.sort_proxies()
-            chosen_proxy = list(self.proxies.loc[(self.proxies['on_work'] == False) & (time.time() - self.proxies['previous_error_time'] > 60)].iterrows())[0][0]
-            self.proxies.at[chosen_proxy, 'on_work'] = True
+        attempt = 0
+        while True:
+            try:
+                with self.lock:
+                    self.sort_proxies()
+                    chosen_proxy = list(self.proxies.loc[(self.proxies['on_work'] == False) & (time.time() - self.proxies['previous_error_time'] > 60)].iterrows())[0][0]
+                    self.proxies.at[chosen_proxy, 'on_work'] = True
+                    break
+            except IndexError:
+                logging.debug(f"Can\'t get proxy on {attempt} retry")
+                time.sleep(0.5)
+                attempt += 1
         return chosen_proxy
 
     def sort_proxies(self):

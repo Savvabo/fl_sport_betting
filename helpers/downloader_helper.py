@@ -4,6 +4,8 @@ import os
 import csv
 import logging
 import random
+from hashlib import sha256
+import base64
 
 
 class Downloader:
@@ -35,6 +37,7 @@ class Downloader:
 
         attempts = self.attempts
         while attempts > 0:
+
             if self.use_user_agents:
                 headers.update({'user-agent': self.get_random_user_agent()})
             attempts -= 1
@@ -92,3 +95,21 @@ class Downloader:
         except:
             logging.error('Cannot get random user-agent', exc_info=True)
             return ''
+
+    def download_file(self, link, response_format, timeout=60):
+        response = self.get(link, timeout=timeout)
+        file_id = sha256(response.content).hexdigest() + f'.{response_format}'
+        file = open(f'../stream/instagram/{file_id}', 'wb')
+        file.write(response.content)
+        file.close()
+        return file_id
+
+    @staticmethod
+    def download_logos(image, resource):
+        image = image.split('base64,')[1]
+        bytes_image = base64.b64decode(image)
+        file_id = sha256(image.encode()).hexdigest() + '.png'
+        file = open(f'../stream/{resource}/{file_id}', 'wb')
+        file.write(bytes_image)
+        file.close()
+        return file_id

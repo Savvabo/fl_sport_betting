@@ -10,11 +10,6 @@ from helpers.helpers import chunkify
 import hashlib
 import time
 import datetime
-logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
-                    level=logging.INFO)
-logging.getLogger("requests").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("connectionpool").setLevel(logging.WARNING)
 
 
 class BaseExchanger(ABC):
@@ -26,7 +21,8 @@ class BaseExchanger(ABC):
             check_url = 'https://' + self.__resource_name__
         except:
             check_url = 'https://www.google.com'
-        self.downloader = Downloader(check_url, attempts=50, use_proxy=True)
+        self.downloader = Downloader(check_url, attempts=20, use_proxy=True)
+        self.request_data = {}
 
     def get_parsed_forecasts(self):
         try:
@@ -105,7 +101,7 @@ class BaseExchanger(ABC):
 
     def parse_forecasts(self, forecasts):
         pool = ThreadPool(int(self.config['parsing_pool_size']))
-        chunks = list(chunkify(forecasts, 200))
+        chunks = list(chunkify(forecasts, int(self.config['parsing_pool_size'])))
         for n, chunk in enumerate(chunks):
             logging.info('parsed {}/{} forecasts chunks'.format(n+1, len(chunks)))
             parsed_chunk = [forecast for forecast in list(pool.map(self.parse_single_forecast, chunk)) if forecast is not None]
@@ -148,10 +144,6 @@ class BaseExchanger(ABC):
         pass
 
     @abstractmethod
-    def get_forecast_id(self, forecast):
-        pass
-
-    @abstractmethod
     def is_last_page(self, page):
         pass
 
@@ -174,9 +166,6 @@ class BaseExchanger(ABC):
 
     def login(self):
         pass
+
     def solve_robot(self):
         pass
-
-
-
-

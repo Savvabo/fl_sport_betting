@@ -1,5 +1,6 @@
 from pymongo import MongoClient, UpdateOne
 from helpers.helpers import parse_config
+import ast
 
 
 class MongoDBStorage:
@@ -8,10 +9,14 @@ class MongoDBStorage:
         self.client = self.connect_to_db()
 
     def connect_to_db(self):
-        if self.config['TEST_ENV']:
+        if ast.literal_eval(self.config['TEST_ENV']) is True:
             client = MongoClient('mongodb://localhost', connect=False)[self.config['NAME']]
         else:
-            client = None
+            client = MongoClient('mongodb://{login}:{password}@{ip}/{db_name}'.format(login=self.config['LOGIN'],
+                                                                                      password=self.config['PASSWORD'],
+                                                                                      ip=self.config['IP'],
+                                                                                      db_name=self.config['NAME']),
+                                 connect=False)[self.config['NAME']]
         return client
 
     def get_instagram_posts(self, resource):

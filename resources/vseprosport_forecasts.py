@@ -5,16 +5,18 @@ import datetime
 import logging
 from storage.mongodb_storage import Forecast
 import pytz
-from forecasts_oop.base_forecasts import BaseExchanger
+from resources.base_forecasts import BaseExchanger
 from helpers.category_translation import category_translation
+import os
 
 
 class VseprosportForecasts(BaseExchanger, ABC):
-
     def __init__(self):
         self.__resource_name__ = 'vseprosport.ru'
         self.domain = 'https://www.vseprosport.ru'
         super().__init__()
+        if not os.path.exists('../stream/vseprosport'):
+            os.makedirs('../stream/vseprosport')
 
     def is_need_to_reparse(self, soup):
         return False
@@ -55,7 +57,8 @@ class VseprosportForecasts(BaseExchanger, ABC):
         game_date = datetime.datetime.fromtimestamp(forecast_date).replace(minute=minute, hour=hour)
         event_info['event_link'] = self.domain + event.a['href']
         event_info['event_teams'] = self.get_express_event_teams(event)
-        event_info['event_logos'] = [img['src'].split('base64,')[1] for img in event.find_all('img')]
+        images = list(map(lambda image: self.downloader.download_logos(image['src'], 'vseprosport'), event.find_all('img')))
+        event_info['event_logos'] = images
         event_info['event_title'] = event.a.find('div', class_='bookmaker_express_item_title_teamsName').text
         event_info['event_date'] = int(game_date.timestamp())
         event_info['event_coefficient'] = float(event.find('div', class_='bookmaker_express_match_coefficient_ui').text)
@@ -72,7 +75,7 @@ class VseprosportForecasts(BaseExchanger, ABC):
     def get_superexpress_maintext(soup):
         return soup.find('section', class_='news_content').text
 
-    def get_events_outcomes(self, soup, forecast_type, teams=(),id_=None):
+    def get_events_outcomes(self, soup, forecast_type, teams=(), id_=None):
         events_outcomes = []
 
         if forecast_type == 'Superexpress':
@@ -174,15 +177,19 @@ class VseprosportForecasts(BaseExchanger, ABC):
         teams = [team_name_block.h4.text for team_name_block in teams_name_block]
         return teams
 
-    def create_solo_data(self, soup,_id):
+    def create_solo_data(self, soup,  _id):
         solo_data = dict()
         solo_data['teams'] = self.get_solo_teams(soup)
-        with self.downloader.proxy_helper.lock:
-            try:
-                solo_data['logos'] = [a.img['src'].split('base64,')[1] for a in soup.find_all('a', class_='team_img')]
-            except:
-                solo_data['logos'] = [a.img['src'] for a in soup.find_all('a', class_='team_img')]
-        events_outcomes = self.get_events_outcomes(soup, 'solo', solo_data['teams'],_id)
+        logos = []
+        for image in soup.find_all('a', class_='team_img'):
+            image = image.img
+            if image['src'].startswith('data:'):
+                new_image = self.downloader.download_logos(image['src'], 'vseprosport')
+                logos.append(new_image)
+            else:
+                logos.append(image['src'])
+        solo_data['logos'] = logos
+        events_outcomes = self.get_events_outcomes(soup, 'solo', solo_data['teams'], _id)
         try:
             about_team_blocks = soup.find_all('div', class_='about_team')[:-1]
             solo_data['about_teams'] = list(map(self.parse_team_description, about_team_blocks))
@@ -199,15 +206,15 @@ class VseprosportForecasts(BaseExchanger, ABC):
 
     def get_forecast_add_info(self, link, forecast_date, forecast_type):
         response = self.downloader.get(link, timeout=15)
-        if response.status_code >= 400:
-            return
+        if not response or response.status_code >= 400:
+            return None, None
         soup = BeautifulSoup(response.text, 'lxml')
         if forecast_type == 'Express':
             additional_info, events_outcomes = self.create_express_data(soup, forecast_date)
         elif forecast_type == 'Superexpress':
             additional_info, events_outcomes = self.create_superexpress_data(soup)
         else:
-            additional_info, events_outcomes = self.create_solo_data(soup,link)
+            additional_info, events_outcomes = self.create_solo_data(soup, link)
         return additional_info, events_outcomes
 
     @staticmethod
@@ -269,6 +276,8 @@ class VseprosportForecasts(BaseExchanger, ABC):
         tournament = self.get_forecast_tournament(forecast)
         forecast_date = self.get_forecast_date(forecast)
         additional_info, events_outcomes = self.get_forecast_add_info(link, forecast_date, forecast_type)
+        if not additional_info:
+            return
         category = self.get_category(forecast)
         forecast_object = Forecast(_id=_id,
                                    link=link,

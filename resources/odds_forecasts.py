@@ -5,27 +5,12 @@ import datetime
 import logging
 from storage.mongodb_storage import Forecast
 import pytz
-from forecasts_oop.base_forecasts import BaseExchanger
+from resources.base_forecasts import BaseExchanger
+from helpers.helpers import HEADERS
 import json
 from helpers.category_translation import category_translation
 import random
-
-HEADERS = [{
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36',
-    'Accept': 'application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en-us',
-    'Accept-Encoding': 'gzip, deflate',
-    'Content-Type': 'application/json,text/html,application/x-www-form-urlencoded'
-},
-    {
-    'User-Agent': "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.12; rv:50.0) Gecko/20100101 Firefox/50.0",
-    'Accept': "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    'Accept-Language': "en-US;q=0.7,en;q=0.3",
-    'Accept-Encoding': "gzip, deflate",
-    'cache-control': "no-cache",
-    'Connection': "keep-alive"
-}
-]
+import os
 
 
 class OddsForecasts(BaseExchanger, ABC):
@@ -33,6 +18,9 @@ class OddsForecasts(BaseExchanger, ABC):
         self.__resource_name__ = 'odds.ru'
         self.domain = 'https://odds.ru'
         super().__init__()
+        self.request_data = {'headers': {'X-Requested-With': 'XMLHttpRequest'}, 'timeout': 15}
+        if not os.path.exists('../stream/odds'):
+            os.makedirs('../stream/odds')
 
     def is_need_to_reparse(self, soup):
         return False
@@ -103,9 +91,18 @@ class OddsForecasts(BaseExchanger, ABC):
         event_timestamp = int(event_time.timestamp())
         return event_timestamp
 
-    @staticmethod
-    def get_forecast_logos(soup):
-        logos = ['https:' + logo.img['src'] for logo in soup.find_all('div', class_='forecast-bet__team-logo')]
+    def get_forecast_logos(self, soup, link):
+        with self.downloader.proxy_helper.lock:
+            logos = []
+            for logo in soup.find_all('div', class_='forecast-bet__team-logo'):
+                if logo.img['src'].startswith('data:'):
+                    logo_name = self.downloader.download_logos(logo.img['src'], 'odds')
+                    logos.append(logo_name)
+                else:
+                    if '//' in logo.img['src']:
+                        logos.append('https:' + logo.img['src'])
+                    else:
+                        logos.append(self.domain + logo.img['src'])
         return logos
 
     def get_events_outcomes(self, soup):
@@ -135,16 +132,19 @@ class OddsForecasts(BaseExchanger, ABC):
         return teams
 
     @staticmethod
-    def get_forecast(soup, _id):
+    def get_forecast(soup):
         all_shity_divs = soup.find('div', class_='forecast-text post-main-content').find_all('div', recursive=False)
         for div in all_shity_divs:
             div.decompose()
         forecast = soup.find('div', class_='forecast-text post-main-content').text
         return forecast
 
-    def get_category(self, soup):
-        category_raw = soup.find_all('li', typeof='v:Breadcrumb')[1].text.split(' ')[-1].replace('\n', '').strip().title()
-        category = category_translation[category_raw]
+    def get_category(self, soup, link):
+        try:
+            category_raw = soup.find_all('li', typeof='v:Breadcrumb')[1].text.split(' ')[-1].replace('\n', '').strip().title()
+            category = category_translation[category_raw]
+        except IndexError:
+            category = None
         return category
 
     def get_forecast_add_info(self, link):
@@ -152,14 +152,14 @@ class OddsForecasts(BaseExchanger, ABC):
         headers = random.choice(HEADERS)
         response = self.downloader.get(link, timeout=15, headers=headers)
         if response.status_code >= 400:
-            raise Exception
+            raise ZeroDivisionError
         soup = BeautifulSoup(response.text, 'lxml')
-        additional_info['logos'] = self.get_forecast_logos(soup)
-        additional_info['forecast'] = self.get_forecast(soup, link)
+        additional_info['logos'] = self.get_forecast_logos(soup, link)
+        additional_info['forecast'] = self.get_forecast(soup)
         additional_info['teams'] = self.get_teams(soup)
         event_outcomes = self.get_events_outcomes(soup)
         coefficient = self.get_forecast_coefficient(soup, event_outcomes)
-        category = self.get_category(soup)
+        category = self.get_category(soup, link)
         return additional_info, event_outcomes, coefficient, category
 
     def parse_single_forecast(self, forecast):
@@ -168,8 +168,7 @@ class OddsForecasts(BaseExchanger, ABC):
         title = self.get_forecast_title(forecast)
         try:
             additional_info, event_outcomes, coefficient, category = self.get_forecast_add_info(link)
-        except Exception as e:
-            print('exsection {}'.format(str(e)))
+        except ZeroDivisionError:
             return
         forecast_date = self.get_forecast_date(forecast)
         forecast_object = Forecast(_id=_id,
@@ -179,14 +178,13 @@ class OddsForecasts(BaseExchanger, ABC):
                                    resource=self.__resource_name__,
                                    forecast_date=forecast_date,
                                    events_outcomes=event_outcomes,
-                                   forecast_type='Solo',
+                                   forecast_type='Solo2',
                                    category=category,
                                    **additional_info)
         return forecast_object
 
     def run(self):
-        request_data = {'headers': {'X-Requested-With': 'XMLHttpRequest'}, 'timeout': 15}
-        all_forecasts = self.scrape_forecasts(request_data=request_data)
+        all_forecasts = self.scrape_forecasts(request_data=self.request_data)
         self.parse_forecasts(all_forecasts)
 
 
