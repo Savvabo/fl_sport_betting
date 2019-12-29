@@ -1,7 +1,7 @@
 import requests
 import logging
 import time
-from helpers.helpers import chunkify
+from helpers.helpers import chunkify, parse_config
 from multiprocessing.pool import ThreadPool
 from threading import Lock
 from requests.exceptions import ProxyError, ConnectTimeout
@@ -12,6 +12,7 @@ import pandas as pd
 class ProxyHelper:
     def __init__(self, check_url, use_proxy=True):
         self.check_url = check_url
+        self.config = parse_config('server')
         if use_proxy:
             self.get_valid_proxies()
         self.lock = Lock()
@@ -98,7 +99,8 @@ class ProxyHelper:
 
     def get_proxies_list(self):
         '''Return list of proxies'''
-        proxies_list = self.load_proxies_list()
+        key = self.config['proxy_key']
+        proxies_list = self.load_proxies_list(key)
         if len(proxies_list) == 0:
             logging.error('get 0 proxies, get them from hardcoded')
             proxies_list_hardcoded = ['104.144.176.107:3128',
@@ -110,14 +112,13 @@ class ProxyHelper:
 
         return proxies_list
 
-    @staticmethod
-    def load_proxies_list():
+    def load_proxies_list(self, key):
         proxies_list = []
         try:
-            api_url = 'http://64.140.158.34:5000/proxy'
+            api_url = f'https://api.best-proxies.ru/proxylist.txt?key={key}&type=http,https&limit=0'
             r = requests.get(api_url, timeout=60)
             if r.status_code == 200:
-                proxies_list = r.json()
+                proxies_list = r.text.split('\r\n')
         except:
             pass
         return proxies_list

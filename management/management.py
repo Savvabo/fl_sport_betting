@@ -9,7 +9,7 @@ import ast
 from resources.resources import RESOURCES
 from storage.mongodb_storage import MongoDBStorage
 from helpers.helpers import parse_config
-logging.basicConfig(format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
+logging.basicConfig(filename='forecasts.log', filemode='a', format=u'%(filename)s[LINE:%(lineno)d]# %(levelname)-8s [%(asctime)s]  %(message)s',
                     level=logging.INFO)
 logging.getLogger("requests").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)

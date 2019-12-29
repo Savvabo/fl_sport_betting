@@ -16,9 +16,12 @@ class InstagramParser:
         self.config = parse_config('instagram')
         self.resources = resources
         self.anon_agent = WebAgent()
-        self.logged_agent = WebAgentAccount(self.config['LOGIN'])
-        self.logged_agent.auth(self.config['PASSWORD'])
         self.agent = {'agent': self.anon_agent, 'set_time': time.time()}
+        self.logged_agent = WebAgentAccount(self.config['LOGIN'])
+        self.logged_agent = self.anon_agent
+        self.agent = {'agent': self.logged_agent, 'set_time': time.time()}
+
+        #self.logged_agent.auth(self.config['PASSWORD'])
         self.mdb = MongoDBStorage()
         self.downloader = Downloader('https://www.instagram.com')
         self.proxy_helper = self.downloader.proxy_helper
@@ -65,7 +68,7 @@ class InstagramParser:
             chosen_proxy, settings = self.get_settings(proxy_only=proxy_only, request_start_time=request_start_time)
             request_start_time = time.time()
             try:
-                posts, pointer = request_to_instagram(proxy=chosen_proxy,setting=settings, pointer=pointer)
+                posts, pointer = request_to_instagram(proxy=chosen_proxy, setting=settings, pointer=pointer)
                 break
             except (InternetException, UnexpectedResponse) as e:
                 with self.proxy_helper.lock:
@@ -86,7 +89,7 @@ class InstagramParser:
         new_posts = []
         pointer = None
         self.insta_request(data=self.resource)
-        posts_count = 300#self.resource.media_count
+        posts_count = self.resource.media_count
         posts_scraped = 0
         while posts_count > posts_scraped:
             try:
@@ -109,7 +112,7 @@ class InstagramParser:
         album_data = dict()
         album_pages = []
         for album_page in album.album:
-            self.insta_request(data=album_page, proxy_only=False)
+            self.insta_request(data=album_page)
             album_pages.append(album_page.resources[-1])
         album_data['album_pages'] = album_pages
         return album_data
@@ -135,10 +138,11 @@ class InstagramParser:
         post_data['icon'] = self.resource.profile_pic_url
         post_data['is_album'] = post.is_album
         post_data['is_video'] = post.is_video
+
         return post_data
 
     def parse_post(self, post):
-        self.insta_request(data=post, proxy_only=False)
+        self.insta_request(data=post)
         post_data = self.get_mandatory_post_data(post)
         if post_data['date'] < self.old_datetime.timestamp():
             self.date_limit = True
@@ -157,7 +161,7 @@ class InstagramParser:
             logging.info('processing {}/{} posts batch'.format(n + 1, len(chunks)))
             chunk = chunk[::-1]
             pool = ThreadPool(pool_size)
-            parsed_posts = list(pool.map(self.parse_post, chunk))
+            parsed_posts = [post for post in pool.map(self.parse_post, chunk) if post['date'] > self.old_datetime.timestamp()]
             pool.close()
             self.mdb.add_new_posts(parsed_posts)
             if self.date_limit:

@@ -135,10 +135,6 @@ def get_insta_posts():
 def get_stream_file(resource, file_name):
     return send_file(f'../stream/{resource}/{file_name}')
 
-@app.route("/")
-def zero():
-    return 'Trololo'
-
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0')

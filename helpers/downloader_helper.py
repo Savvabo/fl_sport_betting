@@ -97,11 +97,14 @@ class Downloader:
             return ''
 
     def download_file(self, link, response_format, timeout=60):
-        response = self.get(link, timeout=timeout)
-        file_id = sha256(response.content).hexdigest() + f'.{response_format}'
-        file = open(f'../stream/instagram/{file_id}', 'wb')
-        file.write(response.content)
-        file.close()
+        try:
+            response = self.get(link, timeout=timeout)
+            file_id = sha256(response.content).hexdigest() + f'.{response_format}'
+            file = open(f'../stream/instagram/{file_id}', 'wb')
+            file.write(response.content)
+            file.close()
+        except AttributeError:
+            return None
         return file_id
 
     @staticmethod
