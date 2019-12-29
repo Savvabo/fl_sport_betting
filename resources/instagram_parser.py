@@ -17,11 +17,11 @@ class InstagramParser:
         self.resources = resources
         self.anon_agent = WebAgent()
         self.agent = {'agent': self.anon_agent, 'set_time': time.time()}
-        self.logged_agent = WebAgentAccount(self.config['LOGIN'])
+        # self.logged_agent = WebAgentAccount(self.config['LOGIN'])
+        # self.logged_agent.auth(self.config['PASSWORD'])
         self.logged_agent = self.anon_agent
         self.agent = {'agent': self.logged_agent, 'set_time': time.time()}
-
-        #self.logged_agent.auth(self.config['PASSWORD'])
+        
         self.mdb = MongoDBStorage()
         self.downloader = Downloader('https://www.instagram.com')
         self.proxy_helper = self.downloader.proxy_helper
