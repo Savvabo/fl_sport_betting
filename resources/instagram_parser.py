@@ -21,7 +21,7 @@ class InstagramParser:
         # self.logged_agent.auth(self.config['PASSWORD'])
         self.logged_agent = self.anon_agent
         self.agent = {'agent': self.logged_agent, 'set_time': time.time()}
-        
+
         self.mdb = MongoDBStorage()
         self.downloader = Downloader('https://www.instagram.com')
         self.proxy_helper = self.downloader.proxy_helper
